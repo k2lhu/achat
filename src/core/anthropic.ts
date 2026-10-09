@@ -3,7 +3,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { ApiError } from './errors.js';
 import { anthropicPrice } from './pricing.js';
-import type { ChatMessage, Endpoint, ModelInfo, StreamEvent } from './types.js';
+import { parseRateLimit } from './ratelimit.js';
+import type { ChatMessage, ChatOptions, EffortSupport, Endpoint, ModelInfo, StreamEvent } from './types.js';
 
 export const ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 export const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-5-5';
@@ -15,6 +16,11 @@ const FALLBACK_MODELS = new Set([
   'claude-opus-5',
   'claude-sonnet-5-5',
 ]);
+
+type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+const EFFORT_LEVELS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+// The API doesn't report defaults; these models default to medium, others to high.
+const MEDIUM_DEFAULT_MODELS = new Set(['claude-opus-5-5', 'claude-haiku-5-5']);
 
 function client(endpoint: Endpoint): Anthropic {
   return new Anthropic({
@@ -38,7 +44,7 @@ export async function* streamAnthropic(
   endpoint: Endpoint,
   model: string,
   messages: ChatMessage[],
-  signal?: AbortSignal,
+  { signal, effort }: ChatOptions,
 ): AsyncGenerator<StreamEvent> {
   // Anthropic takes the system prompt as a top-level field, not a message.
   const system = messages
@@ -54,6 +60,7 @@ export async function* streamAnthropic(
     max_tokens: 64000,
     messages: turns,
     ...(system ? { system } : {}),
+    ...(effort ? { output_config: { effort: effort.level as EffortLevel } } : {}),
   };
 
   try {
@@ -64,6 +71,10 @@ export async function* streamAnthropic(
           { signal },
         )
       : api.messages.stream(params, { signal });
+
+    const { response } = await stream.withResponse();
+    const rateLimit = parseRateLimit(response.headers);
+    if (rateLimit) yield { type: 'rateLimit', rateLimit };
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
@@ -110,8 +121,28 @@ export async function getAnthropicModelInfo(
   signal?: AbortSignal,
 ): Promise<ModelInfo> {
   try {
-    const info = await client(endpoint).models.retrieve(model, {}, { signal });
-    return { contextWindow: info.max_input_tokens ?? undefined, price: anthropicPrice(model) };
+    const { data: info, response } = await client(endpoint)
+      .models.retrieve(model, {}, { signal })
+      .withResponse();
+
+    let effort: EffortSupport | null | undefined;
+    const caps = info.capabilities?.effort;
+    if (caps) {
+      effort = caps.supported
+        ? {
+            levels: EFFORT_LEVELS.filter((level) => caps[level]?.supported),
+            defaultLevel: MEDIUM_DEFAULT_MODELS.has(model) ? 'medium' : 'high',
+            param: 'output_config',
+          }
+        : null;
+    }
+
+    return {
+      contextWindow: info.max_input_tokens ?? undefined,
+      price: anthropicPrice(model),
+      effort,
+      rateLimit: parseRateLimit(response.headers),
+    };
   } catch (error) {
     throw toApiError(error);
   }

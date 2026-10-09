@@ -9,14 +9,14 @@ import {
   removeProvider,
   resolveApiKey,
 } from '../config.js';
-import { getModelInfo, listModels, streamChat } from '../core/client.js';
+import { getModelInfo, listModels, STANDARD_EFFORT_LEVELS, streamChat } from '../core/client.js';
 import { costOf } from '../core/pricing.js';
-import type { ChatMessage, Endpoint, ModelInfo, Usage } from '../core/types.js';
+import type { ChatMessage, EffortParam, Endpoint, ModelInfo, RateLimit, Usage } from '../core/types.js';
 import AddProvider, { type AddedProvider } from './AddProvider.js';
 import { SelectList } from './components.js';
 import { isRenderer, RENDERER_DESCRIPTIONS, type Renderer, RENDERERS, renderMarkdown } from './markdown/index.js';
 import { pickVerb, Spinner } from './Spinner.js';
-import { StatusBar } from './StatusBar.js';
+import { type Connection, type Speed, StatusBar } from './StatusBar.js';
 
 const PROMPT = '❯ ';
 
@@ -37,7 +37,8 @@ type Mode =
   | { type: 'remove' }
   | { type: 'confirmRemove'; name: string }
   | { type: 'models'; ids: string[] }
-  | { type: 'renderer' };
+  | { type: 'renderer' }
+  | { type: 'effort' };
 
 const HELP = `Commands:
   /provider          pick, add or remove a provider
@@ -47,11 +48,12 @@ const HELP = `Commands:
   /model             pick a model from the current provider
   /model <name>      switch to a model by name
   /system [text|off] show, set or remove the system prompt
+  /effort [level]    set reasoning effort (default to use the model's own)
   /renderer [name]   switch markdown rendering: new or classic
   /clear             forget the conversation and start fresh
   /help              show this help
   /quit              exit (or Ctrl+C)
-Model, system prompt and renderer changes last for this session only.
+Model, effort, system prompt and renderer changes last for this session only.
 Up/Down recall earlier prompts. Press Esc while a reply is streaming to stop it.
 Nothing is saved: the conversation disappears when you quit.`;
 
@@ -94,6 +96,15 @@ export default function App({ config, providerName, modelOverride }: Props) {
   const [lastUsage, setLastUsage] = useState<Usage>();
   const [sessionCost, setSessionCost] = useState<number>();
   const [modelInfo, setModelInfo] = useState<ModelInfo>();
+  const [connection, setConnection] = useState<Connection>('connecting');
+  const [rateLimit, setRateLimit] = useState<RateLimit>();
+  const [speed, setSpeed] = useState<Speed>();
+  const [effort, setEffort] = useState<string>();
+  // Which provider/model the fields above describe. Until the lookup for a new
+  // one finishes, the status bar shows "connecting" instead of stale values.
+  const currentKey = provider ? `${provider.name}\n${model}` : '';
+  const [loadedKey, setLoadedKey] = useState('');
+  const loaded = loadedKey === currentKey;
   const [renderer, setRenderer] = useState<Renderer>(config.renderer);
 
   const nextId = useRef(1);
@@ -125,18 +136,43 @@ export default function App({ config, providerName, modelOverride }: Props) {
     setSystemPrompt(next.systemPrompt);
   }
 
-  // Look up the context window and prices for the status bar. Optional, so
-  // failures are ignored.
+  // Whenever the provider or model changes, check the connection and fetch
+  // what the status bar shows before the first message: context window,
+  // prices, effort support and rate limits.
   useEffect(() => {
     setModelInfo(undefined);
+    setRateLimit(undefined);
+    setSpeed(undefined);
     if (!provider || !model) return;
+    setConnection('connecting');
     const controller = new AbortController();
     endpointFor(provider)
       .then((endpoint) => getModelInfo(endpoint, model, controller.signal))
-      .then((info) => controller.signal.aborted || setModelInfo(info))
-      .catch(() => {});
+      .then((info) => {
+        if (controller.signal.aborted) return;
+        setLoadedKey(currentKey);
+        setModelInfo(info);
+        setRateLimit(info.rateLimit);
+        setConnection('connected');
+        // Keep a chosen effort only if the new model accepts it.
+        setEffort((current) => {
+          if (!current || info.effort === undefined || info.effort?.levels.includes(current)) return current;
+          add('info', `Effort reset to default: ${model} doesn’t support "${current}".`);
+          return undefined;
+        });
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadedKey(currentKey);
+        setConnection('failed');
+        add('error', `Couldn’t reach ${provider.name}: ${errorMessage(error)}`);
+      });
     return () => controller.abort();
   }, [provider, model]);
+
+  function effortParam(): EffortParam {
+    return modelInfo?.effort?.param ?? (provider?.kind === 'anthropic' ? 'output_config' : 'reasoning_effort');
+  }
 
   function recall(text: string) {
     setInput(text);
@@ -186,15 +222,28 @@ export default function App({ config, providerName, modelOverride }: Props) {
     abortRef.current = controller;
     let reply = '';
     let usage: Usage | undefined;
+    const startedAt = Date.now();
+    let firstTokenAt: number | undefined;
     // Re-render at most every 50 ms rather than on every token.
     const flush = setInterval(() => setStreaming(reply), 50);
 
     try {
       const endpoint = await endpointFor(provider);
-      for await (const event of streamChat(endpoint, model, messages, controller.signal)) {
-        if (event.type === 'text') reply += event.text;
-        else usage = event.usage;
+      const options = {
+        signal: controller.signal,
+        effort: effort ? { level: effort, param: effortParam() } : undefined,
+      };
+      for await (const event of streamChat(endpoint, model, messages, options)) {
+        if (event.type === 'text') {
+          firstTokenAt ??= Date.now();
+          reply += event.text;
+        } else if (event.type === 'usage') {
+          usage = event.usage;
+        } else {
+          setRateLimit(event.rateLimit);
+        }
       }
+      setConnection('connected');
     } catch (error) {
       if (!controller.signal.aborted) add('error', errorMessage(error));
     } finally {
@@ -207,6 +256,15 @@ export default function App({ config, providerName, modelOverride }: Props) {
     // Without usage (unsupported, or the reply was stopped) the old figures
     // would be stale, so clear them.
     setLastUsage(usage);
+    if (firstTokenAt) {
+      const seconds = (Date.now() - firstTokenAt) / 1000;
+      // Estimate output tokens from length (~4 characters each) if not reported.
+      const outputTokens = usage?.outputTokens ?? Math.round(reply.length / 4);
+      setSpeed({
+        firstToken: (firstTokenAt - startedAt) / 1000,
+        tokensPerSecond: seconds >= 0.1 ? outputTokens / seconds : undefined,
+      });
+    }
     if (usage) {
       const cost = costOf(usage, provider.prices?.[model] ?? modelInfo?.price);
       if (cost !== undefined) setSessionCost((total) => (total ?? 0) + cost);
@@ -372,6 +430,30 @@ export default function App({ config, providerName, modelOverride }: Props) {
         }
         return;
 
+      case 'effort': {
+        const support = modelInfo?.effort;
+        if (support === null) {
+          add('info', `${model} doesn’t support a reasoning effort setting.`);
+          return;
+        }
+        if (!arg) return setMode({ type: 'effort' });
+        if (['default', 'off', 'auto'].includes(arg)) {
+          setEffort(undefined);
+          add('info', 'Effort: model default.');
+          return;
+        }
+        if (support && !support.levels.includes(arg)) {
+          add('error', `${model} supports: ${support.levels.join(', ')}.`);
+          return;
+        }
+        setEffort(arg);
+        add(
+          'info',
+          `Effort: ${arg}.` + (support ? '' : ` ${provider?.name} doesn’t say whether ${model} supports it, so it may be rejected.`),
+        );
+        return;
+      }
+
       case 'renderer':
       case 'render':
         if (!arg) return setMode({ type: 'renderer' });
@@ -507,6 +589,28 @@ export default function App({ config, providerName, modelOverride }: Props) {
           />
         );
 
+      case 'effort': {
+        const support = modelInfo?.effort;
+        const levels = support?.levels ?? STANDARD_EFFORT_LEVELS;
+        const fallback = support?.defaultLevel ? `model default (${support.defaultLevel})` : 'model default';
+        return (
+          <SelectList<string>
+            title={support ? `Reasoning effort for ${model}` : `Reasoning effort (support for ${model} unknown)`}
+            choices={[
+              { label: fallback, value: '' },
+              ...levels.map((level) => ({ label: level, value: level, hint: level === effort ? 'current' : undefined })),
+            ]}
+            initialValue={effort ?? ''}
+            onSelect={(level) => {
+              backToChat();
+              setEffort(level || undefined);
+              add('info', `Effort: ${level || 'model default'}.`);
+            }}
+            onCancel={backToChat}
+          />
+        );
+      }
+
       case 'chat':
         return activity ? (
           <Spinner
@@ -554,13 +658,22 @@ export default function App({ config, providerName, modelOverride }: Props) {
       {provider && mode.type === 'chat' && (
         <Box marginTop={1}>
           <StatusBar
-            provider={provider.name}
-            model={model}
-            turns={history.length / 2}
-            lastUsage={lastUsage}
-            contextWindow={modelInfo?.contextWindow}
-            sessionCost={sessionCost}
             columns={columns}
+            info={{
+              baseUrl: provider.baseUrl,
+              connection: loaded ? connection : 'connecting',
+              provider: provider.name,
+              model,
+              effortSupport: loaded ? modelInfo?.effort : undefined,
+              effort,
+              systemPrompt: Boolean(systemPrompt),
+              rateLimit: loaded ? rateLimit : undefined,
+              lastUsage,
+              contextWindow: loaded ? modelInfo?.contextWindow : undefined,
+              speed: loaded ? speed : undefined,
+              // Show $0 up front when the price is known, so cost is visible before the first reply.
+              sessionCost: sessionCost ?? (provider.prices?.[model] ?? modelInfo?.price ? 0 : undefined),
+            }}
           />
         </Box>
       )}

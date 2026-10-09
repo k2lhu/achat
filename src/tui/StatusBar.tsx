@@ -1,6 +1,6 @@
-import { Text } from 'ink';
+import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
-import type { Usage } from '../core/types.js';
+import type { EffortSupport, RateLimit, Usage } from '../core/types.js';
 
 export function formatTokens(count: number): string {
   if (count < 1000) return String(count);
@@ -15,107 +15,224 @@ export function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-function contextColor(fraction: number): string {
-  if (fraction < 0.5) return 'green';
-  if (fraction < 0.8) return 'yellow';
+/** Green when there's plenty left, yellow, then red. */
+function levelColor(fractionUsed: number): string {
+  if (fractionUsed < 0.5) return 'green';
+  if (fractionUsed < 0.8) return 'yellow';
   return 'red';
 }
 
+/** True for servers on this machine or the local network. */
+export function isLocalUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    return false;
+  }
+  return (
+    host === 'localhost' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}
+
+export type Connection = 'connecting' | 'connected' | 'failed';
+
+export interface Speed {
+  /** Seconds until the first token arrived. */
+  firstToken: number;
+  tokensPerSecond?: number;
+}
+
+export interface StatusInfo {
+  baseUrl: string;
+  connection: Connection;
+  provider: string;
+  model: string;
+  /** undefined while unknown, null when the model doesn't support effort. */
+  effortSupport?: EffortSupport | null;
+  /** The level chosen with /effort, if any. */
+  effort?: string;
+  systemPrompt: boolean;
+  rateLimit?: RateLimit;
+  lastUsage?: Usage;
+  contextWindow?: number;
+  speed?: Speed;
+  /** Total spent this session; undefined when no cost can be known. */
+  sessionCost?: number;
+}
+
 interface Segment {
-  /** Lower numbers are dropped first when the bar doesn't fit. */
-  priority: number;
   width: number;
   node: ReactNode;
 }
 
-interface Props {
-  provider: string;
-  model: string;
-  turns: number;
-  /** Usage of the latest reply; its input + output is the conversation's size. */
-  lastUsage?: Usage;
-  contextWindow?: number;
-  /** Total spent this session, when at least one reply's cost was known. */
-  sessionCost?: number;
-  columns: number;
+function segment(plain: string, node: ReactNode = <Text dimColor>{plain}</Text>): Segment {
+  return { width: plain.length, node };
 }
 
-export function StatusBar({ provider, model, turns, lastUsage, contextWindow, sessionCost, columns }: Props) {
-  const segments: Segment[] = [];
-  const add = (priority: number, plain: string, node: ReactNode) =>
-    segments.push({ priority, width: plain.length, node });
-
-  add(
-    9,
-    `${provider} ${model}`,
+function connectionSegment({ baseUrl, connection }: StatusInfo): Segment {
+  const local = isLocalUrl(baseUrl);
+  const label = local ? 'local' : 'cloud';
+  const dot = { connecting: 'yellow', connected: 'green', failed: 'red' }[connection];
+  const suffix = connection === 'failed' ? ' offline' : connection === 'connecting' ? ' connecting…' : '';
+  return segment(
+    `● ${label}${suffix}`,
     <Text>
-      <Text color="cyan" bold>
-        {provider}
-      </Text>{' '}
-      <Text color="magenta">{model}</Text>
+      <Text color={dot}>●</Text> <Text color={local ? 'green' : 'blue'}>{label}</Text>
+      {suffix && <Text color={dot}>{suffix}</Text>}
     </Text>,
   );
+}
 
-  if (lastUsage) {
-    const used = lastUsage.inputTokens + lastUsage.outputTokens;
-    if (contextWindow) {
-      const fraction = Math.min(1, used / contextWindow);
-      const cells = 8;
-      const filled = Math.max(used > 0 ? 1 : 0, Math.round(fraction * cells));
-      const percent = `${Math.round(fraction * 100)}%`;
-      const label = `ctx ${formatTokens(used)}/${formatTokens(contextWindow)} `;
-      add(
-        5,
-        `${label}${'▰'.repeat(cells)} ${percent}`,
-        <Text>
-          <Text dimColor>{label}</Text>
-          <Text color={contextColor(fraction)}>{'▰'.repeat(filled)}</Text>
-          <Text dimColor>{'▱'.repeat(cells - filled)}</Text>
-          <Text color={contextColor(fraction)}> {percent}</Text>
-        </Text>,
-      );
-    } else {
-      const label = `ctx ${formatTokens(used)}`;
-      add(5, label, <Text dimColor>{label}</Text>);
-    }
-
-    const tokensIn = formatTokens(lastUsage.inputTokens);
-    const tokensOut = formatTokens(lastUsage.outputTokens);
-    add(
-      3,
-      `↑ ${tokensIn} ↓ ${tokensOut}`,
+function effortSegment({ effortSupport, effort, connection }: StatusInfo): Segment {
+  if (effortSupport === null) return segment('no effort');
+  if (effort) {
+    return segment(
+      `effort ${effort}`,
       <Text>
-        <Text color="blue">↑ {tokensIn}</Text> <Text color="green">↓ {tokensOut}</Text>
+        <Text dimColor>effort </Text>
+        <Text color="yellow">{effort}</Text>
       </Text>,
     );
   }
+  if (effortSupport === undefined && connection === 'connecting') return segment('effort …');
+  return segment(`effort ${effortSupport?.defaultLevel ?? 'default'}`);
+}
 
-  if (sessionCost !== undefined) {
-    const cost = formatCost(sessionCost);
-    add(4, cost, <Text color="yellow">{cost}</Text>);
+function rateLimitSegment({ rateLimit }: StatusInfo): Segment {
+  const parts: { label: string; remaining: number; limit?: number }[] = [];
+  if (rateLimit?.requestsRemaining !== undefined) {
+    parts.push({ label: 'req', remaining: rateLimit.requestsRemaining, limit: rateLimit.requestsLimit });
   }
-
-  if (turns > 0) {
-    const label = `${turns} turn${turns === 1 ? '' : 's'}`;
-    add(1, label, <Text dimColor>{label}</Text>);
+  if (rateLimit?.tokensRemaining !== undefined) {
+    parts.push({ label: 'tok', remaining: rateLimit.tokensRemaining, limit: rateLimit.tokensLimit });
   }
+  if (parts.length === 0) return segment('limits —');
 
-  // Drop the least important segments until the bar fits on one line.
-  const separator = 3;
-  const total = () => segments.reduce((sum, s) => sum + s.width, 0) + separator * (segments.length - 1);
-  while (segments.length > 1 && total() > columns) {
-    const lowest = segments.reduce((min, s) => (s.priority < min.priority ? s : min));
-    segments.splice(segments.indexOf(lowest), 1);
-  }
-
-  return (
+  const text = (p: (typeof parts)[number]) =>
+    `${formatTokens(p.remaining)}${p.limit ? `/${formatTokens(p.limit)}` : ''}`;
+  return segment(
+    parts.map((p) => `${p.label} ${text(p)}`).join(' · '),
     <Text>
-      {segments.map((segment, i) => (
-        <Text key={i}>
-          {i > 0 && <Text dimColor> │ </Text>}
-          {segment.node}
+      {parts.map((p, i) => (
+        <Text key={p.label}>
+          {i > 0 && <Text dimColor> · </Text>}
+          <Text dimColor>{p.label} </Text>
+          <Text color={p.limit ? levelColor(1 - p.remaining / p.limit) : undefined}>{text(p)}</Text>
         </Text>
       ))}
-    </Text>
+    </Text>,
+  );
+}
+
+function contextSegment({ lastUsage, contextWindow }: StatusInfo): Segment {
+  const used = lastUsage ? lastUsage.inputTokens + lastUsage.outputTokens : 0;
+  if (!contextWindow) return segment(`ctx ${formatTokens(used)}`);
+
+  const fraction = Math.min(1, used / contextWindow);
+  const cells = 8;
+  const filled = Math.max(used > 0 ? 1 : 0, Math.round(fraction * cells));
+  const percent = `${Math.round(fraction * 100)}%`;
+  const label = `ctx ${formatTokens(used)}/${formatTokens(contextWindow)} `;
+  return segment(
+    `${label}${'▰'.repeat(cells)} ${percent}`,
+    <Text>
+      <Text dimColor>{label}</Text>
+      <Text color={levelColor(fraction)}>{'▰'.repeat(filled)}</Text>
+      <Text dimColor>{'▱'.repeat(cells - filled)}</Text>
+      <Text color={levelColor(fraction)}> {percent}</Text>
+    </Text>,
+  );
+}
+
+function tokensSegment({ lastUsage }: StatusInfo): Segment {
+  const tokensIn = formatTokens(lastUsage?.inputTokens ?? 0);
+  const tokensOut = formatTokens(lastUsage?.outputTokens ?? 0);
+  return segment(
+    `↑ ${tokensIn} ↓ ${tokensOut}`,
+    <Text>
+      <Text color="blue">↑ {tokensIn}</Text> <Text color="green">↓ {tokensOut}</Text>
+    </Text>,
+  );
+}
+
+function speedSegment({ speed }: StatusInfo): Segment {
+  if (!speed) return segment('⚡ —');
+  const parts = [`${speed.firstToken.toFixed(1)}s`];
+  if (speed.tokensPerSecond !== undefined) parts.push(`${Math.round(speed.tokensPerSecond)} tok/s`);
+  const text = parts.join(' · ');
+  return segment(
+    `⚡ ${text}`,
+    <Text>
+      <Text color="yellow">⚡</Text> <Text color="cyan">{text}</Text>
+    </Text>,
+  );
+}
+
+function costSegment({ sessionCost }: StatusInfo): Segment {
+  if (sessionCost === undefined) return segment('cost —');
+  const cost = formatCost(sessionCost);
+  return segment(cost, <Text color="yellow">{cost}</Text>);
+}
+
+/** Fits segments into lines no wider than `columns`, wrapping where needed. */
+function flow(segments: Segment[], columns: number): Segment[][] {
+  const separator = 3;
+  const lines: Segment[][] = [];
+  let width = 0;
+  for (const item of segments) {
+    const current = lines.at(-1);
+    if (current && width + separator + item.width <= columns) {
+      current.push(item);
+      width += separator + item.width;
+    } else {
+      lines.push([item]);
+      width = item.width;
+    }
+  }
+  return lines;
+}
+
+export function StatusBar({ info, columns }: { info: StatusInfo; columns: number }) {
+  const rows = [
+    [
+      connectionSegment(info),
+      segment(
+        info.provider,
+        <Text color="cyan" bold>
+          {info.provider}
+        </Text>,
+      ),
+      segment(info.model, <Text color="magenta">{info.model}</Text>),
+      effortSegment(info),
+      info.systemPrompt ? segment('system on', <Text color="yellow">system on</Text>) : segment('system off'),
+      rateLimitSegment(info),
+    ],
+    [contextSegment(info), tokensSegment(info), speedSegment(info), costSegment(info)],
+  ];
+
+  return (
+    <Box flexDirection="column">
+      {rows
+        .flatMap((row) => flow(row, columns))
+        .map((line, n) => (
+          <Text key={n}>
+            {line.map((item, i) => (
+              <Text key={i}>
+                {i > 0 && <Text dimColor> │ </Text>}
+                {item.node}
+              </Text>
+            ))}
+          </Text>
+        ))}
+    </Box>
   );
 }

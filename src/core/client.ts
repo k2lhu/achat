@@ -4,7 +4,8 @@
 
 import { getAnthropicModelInfo, listAnthropicModels, streamAnthropic } from './anthropic.js';
 import { ApiError } from './errors.js';
-import type { ChatMessage, Endpoint, ModelInfo, StreamEvent, Usage } from './types.js';
+import { parseRateLimit } from './ratelimit.js';
+import type { ChatMessage, ChatOptions, EffortSupport, Endpoint, ModelInfo, StreamEvent, Usage } from './types.js';
 
 export { ApiError };
 
@@ -33,16 +34,16 @@ async function toApiError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, `${res.status}: ${message}`);
 }
 
-/** Streams the reply: text chunks as they arrive, then token usage if reported. */
+/** Streams the reply: rate limits and text chunks as they arrive, then token usage if reported. */
 export function streamChat(
   endpoint: Endpoint,
   model: string,
   messages: ChatMessage[],
-  signal?: AbortSignal,
+  options: ChatOptions = {},
 ): AsyncGenerator<StreamEvent> {
   return endpoint.kind === 'anthropic'
-    ? streamAnthropic(endpoint, model, messages, signal)
-    : streamOpenAI(endpoint, model, messages, signal);
+    ? streamAnthropic(endpoint, model, messages, options)
+    : streamOpenAI(endpoint, model, messages, options);
 }
 
 /** Lists model IDs the endpoint offers, sorted alphabetically. */
@@ -50,19 +51,23 @@ export async function listModels(endpoint: Endpoint, signal?: AbortSignal): Prom
   const ids =
     endpoint.kind === 'anthropic'
       ? await listAnthropicModels(endpoint, signal)
-      : (await fetchOpenAIModels(endpoint, signal)).map((m) => String(m.id));
+      : (await fetchOpenAIModels(endpoint, signal)).models.map((m) => String(m.id));
   return ids.sort((a, b) => a.localeCompare(b));
 }
 
-/** Context window and pricing for a model, as far as the API reports them. */
+/**
+ * Context window, pricing, effort support and rate limits for a model, as far
+ * as the API reports them. Also serves as the connection check at startup.
+ */
 export async function getModelInfo(
   endpoint: Endpoint,
   model: string,
   signal?: AbortSignal,
 ): Promise<ModelInfo> {
   if (endpoint.kind === 'anthropic') return getAnthropicModelInfo(endpoint, model, signal);
-  const entry = (await fetchOpenAIModels(endpoint, signal)).find((m) => m.id === model);
-  return entry ? modelInfoFromListing(entry) : {};
+  const { models, rateLimit } = await fetchOpenAIModels(endpoint, signal);
+  const entry = models.find((m) => m.id === model);
+  return { ...(entry ? modelInfoFromListing(entry) : {}), rateLimit };
 }
 
 // Servers that reject `stream_options` usually say so in the error message.
@@ -72,8 +77,14 @@ async function* streamOpenAI(
   endpoint: Endpoint,
   model: string,
   messages: ChatMessage[],
-  signal?: AbortSignal,
+  { signal, effort }: ChatOptions,
 ): AsyncGenerator<StreamEvent> {
+  const effortField =
+    effort?.param === 'reasoning'
+      ? { reasoning: { effort: effort.level } }
+      : effort
+        ? { reasoning_effort: effort.level }
+        : {};
   const request = (withUsage: boolean) =>
     fetch(url(endpoint, '/chat/completions'), {
       method: 'POST',
@@ -82,6 +93,7 @@ async function* streamOpenAI(
         model,
         messages,
         stream: true,
+        ...effortField,
         ...(withUsage ? { stream_options: { include_usage: true } } : {}),
       }),
       signal,
@@ -96,6 +108,9 @@ async function* streamOpenAI(
   }
   if (!res.ok) throw await toApiError(res);
   if (!res.body) throw new ApiError(res.status, 'Response has no body');
+
+  const rateLimit = parseRateLimit(res.headers);
+  if (rateLimit) yield { type: 'rateLimit', rateLimit };
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -130,10 +145,12 @@ async function* streamOpenAI(
           throw new ApiError(0, chunk.error.message ?? JSON.stringify(chunk.error));
         }
         if (chunk.usage) {
+          // OpenRouter puts the cost in usage; Venice in a top-level cost object.
+          const cost = typeof chunk.usage.cost === 'number' ? chunk.usage.cost : chunk.cost?.usd;
           usage = {
             inputTokens: chunk.usage.prompt_tokens ?? 0,
             outputTokens: chunk.usage.completion_tokens ?? 0,
-            ...(typeof chunk.usage.cost === 'number' ? { cost: chunk.usage.cost } : {}),
+            ...(typeof cost === 'number' ? { cost } : {}),
           };
         }
         const delta = chunk.choices?.[0]?.delta?.content;
@@ -148,11 +165,11 @@ async function* streamOpenAI(
 
 type ModelListing = Record<string, unknown> & { id: unknown };
 
-async function fetchOpenAIModels(endpoint: Endpoint, signal?: AbortSignal): Promise<ModelListing[]> {
+async function fetchOpenAIModels(endpoint: Endpoint, signal?: AbortSignal) {
   const res = await fetch(url(endpoint, '/models'), { headers: headers(endpoint), signal });
   if (!res.ok) throw await toApiError(res);
   const body = await res.json();
-  return body?.data ?? [];
+  return { models: (body?.data ?? []) as ModelListing[], rateLimit: parseRateLimit(res.headers) };
 }
 
 function field(source: unknown, path: string): unknown {
@@ -184,8 +201,36 @@ const CONTEXT_FIELDS = [
   'top_provider.context_length',
 ];
 
+export const STANDARD_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high'];
+
+function effortFromListing(entry: ModelListing): EffortSupport | null | undefined {
+  // Venice describes it exactly.
+  const venice = field(entry, 'model_spec.capabilities');
+  if (venice && typeof venice === 'object' && 'supportsReasoningEffort' in venice) {
+    const caps = venice as Record<string, unknown>;
+    if (!caps.supportsReasoningEffort) return null;
+    const options = Array.isArray(caps.reasoningEffortOptions) ? caps.reasoningEffortOptions.map(String) : [];
+    return {
+      levels: options.length ? options : STANDARD_EFFORT_LEVELS,
+      defaultLevel: typeof caps.defaultReasoningEffort === 'string' ? caps.defaultReasoningEffort : undefined,
+      param: 'reasoning_effort',
+    };
+  }
+  // OpenRouter lists the request parameters each model accepts.
+  const supported = entry.supported_parameters;
+  if (Array.isArray(supported)) {
+    if (supported.includes('reasoning_effort')) return { levels: STANDARD_EFFORT_LEVELS, param: 'reasoning_effort' };
+    if (supported.includes('reasoning')) return { levels: STANDARD_EFFORT_LEVELS, param: 'reasoning' };
+    return null;
+  }
+  return undefined;
+}
+
 function modelInfoFromListing(entry: ModelListing): ModelInfo {
-  const info: ModelInfo = { contextWindow: firstNumber(entry, CONTEXT_FIELDS) };
+  const info: ModelInfo = {
+    contextWindow: firstNumber(entry, CONTEXT_FIELDS),
+    effort: effortFromListing(entry),
+  };
 
   // Venice: USD per million tokens.
   const veniceIn = firstNumber(entry, ['model_spec.pricing.input.usd']);
