@@ -61,7 +61,6 @@ export interface StatusInfo {
   effortSupport?: EffortSupport | null;
   /** The level chosen with /effort, if any. */
   effort?: string;
-  systemPrompt: boolean;
   rateLimit?: RateLimit;
   lastUsage?: Usage;
   contextWindow?: number;
@@ -95,19 +94,12 @@ function connectionSegment({ baseUrl, connection }: StatusInfo): Segment {
   );
 }
 
-function effortSegment({ effortSupport, effort, connection }: StatusInfo): Segment {
-  if (effortSupport === null) return segment('no effort');
-  if (effort) {
-    return segment(
-      `effort ${effort}`,
-      <Text>
-        <Text dimColor>effort </Text>
-        <Text color="yellow">{effort}</Text>
-      </Text>,
-    );
-  }
-  if (effortSupport === undefined && connection === 'connecting') return segment('effort …');
-  return segment(`effort ${effortSupport?.defaultLevel ?? 'default'}`);
+/** The effort level in yellow: the chosen one, else the model's default. Hidden when unsupported. */
+function effortSegment({ effortSupport, effort, connection }: StatusInfo): Segment | undefined {
+  if (effortSupport === null) return undefined;
+  if (!effort && effortSupport === undefined && connection === 'connecting') return segment('…');
+  const level = effort ?? effortSupport?.defaultLevel ?? 'default';
+  return segment(level, <Text color="yellow">{level}</Text>);
 }
 
 function rateLimitSegment({ rateLimit }: StatusInfo): Segment {
@@ -230,7 +222,7 @@ function flow(segments: Segment[], columns: number): Segment[][] {
 }
 
 export function StatusBar({ info, columns }: { info: StatusInfo; columns: number }) {
-  const rows = [
+  const rows: (Segment | undefined)[][] = [
     [
       connectionSegment(info),
       segment(
@@ -241,17 +233,15 @@ export function StatusBar({ info, columns }: { info: StatusInfo; columns: number
       ),
       segment(info.model, <Text color="magenta">{info.model}</Text>),
       effortSegment(info),
-      info.systemPrompt ? segment('system on', <Text color="yellow">system on</Text>) : segment('system off'),
       rateLimitSegment(info),
     ],
-    [contextSegment(info), tokensSegment(info), speedSegment(info), costSegment(info), balanceSegment(info)].filter(
-      (item): item is Segment => item !== undefined,
-    ),
+    [contextSegment(info), tokensSegment(info), speedSegment(info), costSegment(info), balanceSegment(info)],
   ];
 
   return (
     <Box flexDirection="column">
       {rows
+        .map((row) => row.filter((item): item is Segment => item !== undefined))
         .flatMap((row) => flow(row, columns))
         .map((line, n) => (
           <Text key={n}>

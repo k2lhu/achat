@@ -726,7 +726,6 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
               model,
               effortSupport: loaded ? modelInfo?.effort : undefined,
               effort,
-              systemPrompt: Boolean(systemPrompt),
               rateLimit: loaded ? rateLimit : undefined,
               lastUsage,
               contextWindow: loaded ? modelInfo?.contextWindow : undefined,
