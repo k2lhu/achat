@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { parse, stringify } from 'smol-toml';
-import type { ApiKind } from './core/types.js';
+import type { ApiKind, Price } from './core/types.js';
 import { isRenderer, type Renderer, RENDERERS } from './tui/markdown/index.js';
 
 const run = promisify(execFile);
@@ -30,6 +30,8 @@ export interface Provider {
   apiKeyRef?: string;
   model: string;
   systemPrompt?: string;
+  /** USD per million tokens by model ID, for APIs that don't report prices. */
+  prices?: Record<string, Price>;
 }
 
 export interface Config {
@@ -67,7 +69,23 @@ function toProvider(name: string, raw: unknown): Provider {
     model,
     apiKeyRef: optionalString(raw.api_key, `providers.${name}.api_key`),
     systemPrompt: optionalString(raw.system_prompt, `providers.${name}.system_prompt`),
+    prices: toPrices(raw.prices, `providers.${name}.prices`),
   };
+}
+
+/** Parses `prices = { "model-id" = [input, output] }` (USD per million tokens). */
+function toPrices(raw: unknown, field: string): Record<string, Price> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) throw new ConfigError(`"${field}" must be a table`);
+  const prices: Record<string, Price> = {};
+  for (const [model, value] of Object.entries(raw)) {
+    const [input, output] = Array.isArray(value) ? value : [];
+    if (typeof input !== 'number' || typeof output !== 'number' || (value as unknown[]).length !== 2) {
+      throw new ConfigError(`"${field}.${model}" must be [input, output] in USD per million tokens`);
+    }
+    prices[model] = { input, output };
+  }
+  return prices;
 }
 
 async function readConfigText(): Promise<string | undefined> {

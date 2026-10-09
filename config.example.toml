@@ -23,6 +23,9 @@ base_url = "https://api.openai.com/v1"
 api_key = "keychain:openai"
 model = "gpt-5-mini"
 # system_prompt = "You are a concise assistant."
+# Prices for the cost shown in the status bar, in USD per million tokens [input, output].
+# Only needed where the API doesn't report them (Anthropic, OpenRouter and Venice do).
+# prices = { "gpt-5-mini" = [0.25, 2.0] }
 
 [providers.ollama]
 base_url = "http://localhost:11434/v1"

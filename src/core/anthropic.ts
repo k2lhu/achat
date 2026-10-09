@@ -1,8 +1,9 @@
 // Anthropic Messages API backend, via the official SDK.
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { ChatMessage, Endpoint } from './types.js';
 import { ApiError } from './errors.js';
+import { anthropicPrice } from './pricing.js';
+import type { ChatMessage, Endpoint, ModelInfo, StreamEvent } from './types.js';
 
 export const ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 export const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-5-5';
@@ -38,7 +39,7 @@ export async function* streamAnthropic(
   model: string,
   messages: ChatMessage[],
   signal?: AbortSignal,
-): AsyncGenerator<string> {
+): AsyncGenerator<StreamEvent> {
   // Anthropic takes the system prompt as a top-level field, not a message.
   const system = messages
     .filter((m) => m.role === 'system')
@@ -66,11 +67,20 @@ export async function* streamAnthropic(
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        yield event.delta.text;
+        yield { type: 'text', text: event.delta.text };
       }
     }
 
     const final = await stream.finalMessage();
+    const usage = final.usage;
+    yield {
+      type: 'usage',
+      usage: {
+        inputTokens:
+          usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0),
+        outputTokens: usage.output_tokens,
+      },
+    };
     if (final.stop_reason === 'refusal') {
       throw new ApiError(0, 'Claude declined to answer this request.');
     }
@@ -89,6 +99,19 @@ export async function listAnthropicModels(
       ids.push(model.id);
     }
     return ids;
+  } catch (error) {
+    throw toApiError(error);
+  }
+}
+
+export async function getAnthropicModelInfo(
+  endpoint: Endpoint,
+  model: string,
+  signal?: AbortSignal,
+): Promise<ModelInfo> {
+  try {
+    const info = await client(endpoint).models.retrieve(model, {}, { signal });
+    return { contextWindow: info.max_input_tokens ?? undefined, price: anthropicPrice(model) };
   } catch (error) {
     throw toApiError(error);
   }

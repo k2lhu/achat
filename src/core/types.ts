@@ -16,3 +16,25 @@ export interface Endpoint {
   baseUrl: string;
   apiKey?: string;
 }
+
+/** Token counts for one request, as reported by the API. */
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  /** USD, only when the API reports it (e.g. OpenRouter). */
+  cost?: number;
+}
+
+export type StreamEvent = { type: 'text'; text: string } | { type: 'usage'; usage: Usage };
+
+/** USD per million tokens. */
+export interface Price {
+  input: number;
+  output: number;
+}
+
+/** What the API tells us about a model; every field is optional. */
+export interface ModelInfo {
+  contextWindow?: number;
+  price?: Price;
+}

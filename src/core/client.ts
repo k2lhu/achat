@@ -2,9 +2,9 @@
 // TextDecoder, ReadableStream); Anthropic endpoints go through the official SDK.
 // Either way it runs unchanged in Node, browsers, Electron and Tauri.
 
-import { listAnthropicModels, streamAnthropic } from './anthropic.js';
+import { getAnthropicModelInfo, listAnthropicModels, streamAnthropic } from './anthropic.js';
 import { ApiError } from './errors.js';
-import type { ChatMessage, Endpoint } from './types.js';
+import type { ChatMessage, Endpoint, ModelInfo, StreamEvent, Usage } from './types.js';
 
 export { ApiError };
 
@@ -33,13 +33,13 @@ async function toApiError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, `${res.status}: ${message}`);
 }
 
-/** Streams the assistant's reply, yielding text chunks as they arrive. */
+/** Streams the reply: text chunks as they arrive, then token usage if reported. */
 export function streamChat(
   endpoint: Endpoint,
   model: string,
   messages: ChatMessage[],
   signal?: AbortSignal,
-): AsyncGenerator<string> {
+): AsyncGenerator<StreamEvent> {
   return endpoint.kind === 'anthropic'
     ? streamAnthropic(endpoint, model, messages, signal)
     : streamOpenAI(endpoint, model, messages, signal);
@@ -50,28 +50,57 @@ export async function listModels(endpoint: Endpoint, signal?: AbortSignal): Prom
   const ids =
     endpoint.kind === 'anthropic'
       ? await listAnthropicModels(endpoint, signal)
-      : await listOpenAIModels(endpoint, signal);
+      : (await fetchOpenAIModels(endpoint, signal)).map((m) => String(m.id));
   return ids.sort((a, b) => a.localeCompare(b));
 }
+
+/** Context window and pricing for a model, as far as the API reports them. */
+export async function getModelInfo(
+  endpoint: Endpoint,
+  model: string,
+  signal?: AbortSignal,
+): Promise<ModelInfo> {
+  if (endpoint.kind === 'anthropic') return getAnthropicModelInfo(endpoint, model, signal);
+  const entry = (await fetchOpenAIModels(endpoint, signal)).find((m) => m.id === model);
+  return entry ? modelInfoFromListing(entry) : {};
+}
+
+// Servers that reject `stream_options` usually say so in the error message.
+const UNSUPPORTED_OPTION = /stream_options|include_usage|unrecognized|unknown (field|param|argument)|extra (field|input)/i;
 
 async function* streamOpenAI(
   endpoint: Endpoint,
   model: string,
   messages: ChatMessage[],
   signal?: AbortSignal,
-): AsyncGenerator<string> {
-  const res = await fetch(url(endpoint, '/chat/completions'), {
-    method: 'POST',
-    headers: headers(endpoint),
-    body: JSON.stringify({ model, messages, stream: true }),
-    signal,
-  });
+): AsyncGenerator<StreamEvent> {
+  const request = (withUsage: boolean) =>
+    fetch(url(endpoint, '/chat/completions'), {
+      method: 'POST',
+      headers: headers(endpoint),
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        ...(withUsage ? { stream_options: { include_usage: true } } : {}),
+      }),
+      signal,
+    });
+
+  // Ask for token usage; retry without it for servers that don't support the option.
+  let res = await request(true);
+  if (res.status === 400 || res.status === 422) {
+    const error = await toApiError(res);
+    if (!UNSUPPORTED_OPTION.test(error.message)) throw error;
+    res = await request(false);
+  }
   if (!res.ok) throw await toApiError(res);
   if (!res.body) throw new ApiError(res.status, 'Response has no body');
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let usage: Usage | undefined;
 
   try {
     for (;;) {
@@ -86,7 +115,10 @@ async function* streamOpenAI(
         if (!line.startsWith('data:')) continue;
 
         const data = line.slice(5).trim();
-        if (data === '[DONE]') return;
+        if (data === '[DONE]') {
+          if (usage) yield { type: 'usage', usage };
+          return;
+        }
 
         let chunk;
         try {
@@ -97,18 +129,75 @@ async function* streamOpenAI(
         if (chunk.error) {
           throw new ApiError(0, chunk.error.message ?? JSON.stringify(chunk.error));
         }
+        if (chunk.usage) {
+          usage = {
+            inputTokens: chunk.usage.prompt_tokens ?? 0,
+            outputTokens: chunk.usage.completion_tokens ?? 0,
+            ...(typeof chunk.usage.cost === 'number' ? { cost: chunk.usage.cost } : {}),
+          };
+        }
         const delta = chunk.choices?.[0]?.delta?.content;
-        if (delta) yield delta;
+        if (delta) yield { type: 'text', text: delta };
       }
     }
+    if (usage) yield { type: 'usage', usage };
   } finally {
     reader.releaseLock();
   }
 }
 
-async function listOpenAIModels(endpoint: Endpoint, signal?: AbortSignal): Promise<string[]> {
+type ModelListing = Record<string, unknown> & { id: unknown };
+
+async function fetchOpenAIModels(endpoint: Endpoint, signal?: AbortSignal): Promise<ModelListing[]> {
   const res = await fetch(url(endpoint, '/models'), { headers: headers(endpoint), signal });
   if (!res.ok) throw await toApiError(res);
   const body = await res.json();
-  return (body?.data ?? []).map((m: { id: string }) => m.id);
+  return body?.data ?? [];
+}
+
+function field(source: unknown, path: string): unknown {
+  let value = source;
+  for (const key of path.split('.')) {
+    if (typeof value !== 'object' || value === null) return undefined;
+    value = (value as Record<string, unknown>)[key];
+  }
+  return value;
+}
+
+function firstNumber(source: unknown, paths: string[]): number | undefined {
+  for (const path of paths) {
+    const value = Number(field(source, path));
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return undefined;
+}
+
+// There's no standard for this in OpenAI-compatible APIs; these are the
+// field names used by OpenRouter, Venice, Groq, vLLM and others.
+const CONTEXT_FIELDS = [
+  'context_length',
+  'context_window',
+  'max_context_length',
+  'max_input_tokens',
+  'max_model_len',
+  'model_spec.availableContextTokens',
+  'top_provider.context_length',
+];
+
+function modelInfoFromListing(entry: ModelListing): ModelInfo {
+  const info: ModelInfo = { contextWindow: firstNumber(entry, CONTEXT_FIELDS) };
+
+  // Venice: USD per million tokens.
+  const veniceIn = firstNumber(entry, ['model_spec.pricing.input.usd']);
+  const veniceOut = firstNumber(entry, ['model_spec.pricing.output.usd']);
+  // OpenRouter: USD per token, as strings.
+  const routerIn = firstNumber(entry, ['pricing.prompt']);
+  const routerOut = firstNumber(entry, ['pricing.completion']);
+
+  if (veniceIn !== undefined && veniceOut !== undefined) {
+    info.price = { input: veniceIn, output: veniceOut };
+  } else if (routerIn !== undefined && routerOut !== undefined) {
+    info.price = { input: routerIn * 1_000_000, output: routerOut * 1_000_000 };
+  }
+  return info;
 }

@@ -1,6 +1,6 @@
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CONFIG_PATH,
   type Config,
@@ -9,11 +9,16 @@ import {
   removeProvider,
   resolveApiKey,
 } from '../config.js';
-import { listModels, streamChat } from '../core/client.js';
-import type { ChatMessage, Endpoint } from '../core/types.js';
+import { getModelInfo, listModels, streamChat } from '../core/client.js';
+import { costOf } from '../core/pricing.js';
+import type { ChatMessage, Endpoint, ModelInfo, Usage } from '../core/types.js';
 import AddProvider, { type AddedProvider } from './AddProvider.js';
 import { SelectList } from './components.js';
 import { isRenderer, RENDERER_DESCRIPTIONS, type Renderer, RENDERERS, renderMarkdown } from './markdown/index.js';
+import { pickVerb, Spinner } from './Spinner.js';
+import { StatusBar } from './StatusBar.js';
+
+const PROMPT = '❯ ';
 
 type EntryKind = 'user' | 'assistant' | 'info' | 'error';
 
@@ -82,8 +87,13 @@ export default function App({ config, providerName, modelOverride }: Props) {
     config.providers.length ? { type: 'chat' } : { type: 'add' },
   );
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
+  // What the app is waiting on, shown by the spinner; null when idle.
+  const [activity, setActivity] = useState<{ label: string; startedAt: number } | null>(null);
+  const busy = activity !== null;
   const [streaming, setStreaming] = useState<string | null>(null);
+  const [lastUsage, setLastUsage] = useState<Usage>();
+  const [sessionCost, setSessionCost] = useState<number>();
+  const [modelInfo, setModelInfo] = useState<ModelInfo>();
   const [renderer, setRenderer] = useState<Renderer>(config.renderer);
 
   const nextId = useRef(1);
@@ -114,6 +124,19 @@ export default function App({ config, providerName, modelOverride }: Props) {
     setModel(next.model);
     setSystemPrompt(next.systemPrompt);
   }
+
+  // Look up the context window and prices for the status bar. Optional, so
+  // failures are ignored.
+  useEffect(() => {
+    setModelInfo(undefined);
+    if (!provider || !model) return;
+    const controller = new AbortController();
+    endpointFor(provider)
+      .then((endpoint) => getModelInfo(endpoint, model, controller.signal))
+      .then((info) => controller.signal.aborted || setModelInfo(info))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [provider, model]);
 
   function recall(text: string) {
     setInput(text);
@@ -156,19 +179,21 @@ export default function App({ config, providerName, modelOverride }: Props) {
       : conversation;
 
     add('user', text);
-    setBusy(true);
+    setActivity({ label: pickVerb(), startedAt: Date.now() });
     setStreaming('');
 
     const controller = new AbortController();
     abortRef.current = controller;
     let reply = '';
+    let usage: Usage | undefined;
     // Re-render at most every 50 ms rather than on every token.
     const flush = setInterval(() => setStreaming(reply), 50);
 
     try {
       const endpoint = await endpointFor(provider);
-      for await (const chunk of streamChat(endpoint, model, messages, controller.signal)) {
-        reply += chunk;
+      for await (const event of streamChat(endpoint, model, messages, controller.signal)) {
+        if (event.type === 'text') reply += event.text;
+        else usage = event.usage;
       }
     } catch (error) {
       if (!controller.signal.aborted) add('error', errorMessage(error));
@@ -176,7 +201,15 @@ export default function App({ config, providerName, modelOverride }: Props) {
       clearInterval(flush);
       abortRef.current = null;
       setStreaming(null);
-      setBusy(false);
+      setActivity(null);
+    }
+
+    // Without usage (unsupported, or the reply was stopped) the old figures
+    // would be stale, so clear them.
+    setLastUsage(usage);
+    if (usage) {
+      const cost = costOf(usage, provider.prices?.[model] ?? modelInfo?.price);
+      if (cost !== undefined) setSessionCost((total) => (total ?? 0) + cost);
     }
 
     if (reply) {
@@ -259,7 +292,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
 
   async function openModelPicker() {
     if (!provider) return;
-    setBusy(true);
+    setActivity({ label: 'Loading models', startedAt: Date.now() });
     try {
       const ids = await listModels(await endpointFor(provider));
       if (ids.length) setMode({ type: 'models', ids });
@@ -267,7 +300,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
     } catch (error) {
       add('error', `Could not list models: ${errorMessage(error)}`);
     } finally {
-      setBusy(false);
+      setActivity(null);
     }
   }
 
@@ -290,6 +323,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
 
       case 'clear':
         setHistory([]);
+        setLastUsage(undefined);
         add('info', 'Conversation cleared. The next message starts fresh.');
         return;
 
@@ -474,15 +508,18 @@ export default function App({ config, providerName, modelOverride }: Props) {
         );
 
       case 'chat':
-        return busy ? (
-          <Text dimColor>
-            {streaming === '' ? 'Waiting for reply…' : streaming ? '' : 'Working…'}
-            {streaming !== null && ' (Esc to stop)'}
-          </Text>
+        return activity ? (
+          <Spinner
+            label={activity.label}
+            startedAt={activity.startedAt}
+            // Rough estimate (~4 characters per token) until the API reports usage.
+            tokens={streaming ? Math.round(streaming.length / 4) : undefined}
+            stoppable={streaming !== null}
+          />
         ) : (
           <Box>
             <Text color="cyan" bold>
-              {'› '}
+              {PROMPT}
             </Text>
             <TextInput
               key={inputKey}
@@ -515,10 +552,17 @@ export default function App({ config, providerName, modelOverride }: Props) {
       {renderPanel()}
 
       {provider && mode.type === 'chat' && (
-        <Text dimColor>
-          {provider.name} · {model}
-          {history.length > 0 && ` · ${history.length / 2} turn${history.length === 2 ? '' : 's'}`}
-        </Text>
+        <Box marginTop={1}>
+          <StatusBar
+            provider={provider.name}
+            model={model}
+            turns={history.length / 2}
+            lastUsage={lastUsage}
+            contextWindow={modelInfo?.contextWindow}
+            sessionCost={sessionCost}
+            columns={columns}
+          />
+        </Box>
       )}
     </>
   );
@@ -530,7 +574,7 @@ function EntryView({ entry, width }: { entry: Entry; width: number }) {
       return (
         <Text>
           <Text color="cyan" bold>
-            {'› '}
+            {PROMPT}
           </Text>
           {entry.text}
         </Text>

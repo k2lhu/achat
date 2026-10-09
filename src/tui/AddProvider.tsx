@@ -11,6 +11,7 @@ import { ANTHROPIC_BASE_URL, ANTHROPIC_DEFAULT_MODEL } from '../core/anthropic.j
 import { listModels, OPENAI_BASE_URL } from '../core/client.js';
 import type { ApiKind } from '../core/types.js';
 import { type Choice, Prompt, SelectList } from './components.js';
+import { Spinner } from './Spinner.js';
 
 interface Preset {
   label: string;
@@ -271,7 +272,7 @@ export default function AddProvider({ existingNames, onDone, onCancel }: Props) 
         />
       )}
 
-      {step === 'checking' && <Waiting text="Checking the connection…" onCancel={onCancel} />}
+      {step === 'checking' && <Waiting onCancel={onCancel} />}
 
       {step === 'checkFailed' && (
         <>
@@ -336,9 +337,10 @@ export default function AddProvider({ existingNames, onDone, onCancel }: Props) 
   );
 }
 
-function Waiting({ text, onCancel }: { text: string; onCancel: () => void }) {
+function Waiting({ onCancel }: { onCancel: () => void }) {
+  const [startedAt] = useState(Date.now);
   useInput((_input, key) => {
     if (key.escape) onCancel();
   });
-  return <Text dimColor>{text} (Esc to cancel)</Text>;
+  return <Spinner label="Checking the connection" startedAt={startedAt} stoppable />;
 }
