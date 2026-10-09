@@ -1,7 +1,8 @@
 import { Text } from 'ink';
 import { useEffect, useState } from 'react';
 
-const FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+// A circle that grows and shrinks, like breathing.
+const FRAMES = ['∙', '∘', '○', '◯', '○', '∘'];
 const VERBS = [
   'Cooking',
   'Brewing',
@@ -17,8 +18,8 @@ const VERBS = [
   'Steeping',
 ];
 
-const ACCENT = '#D97757';
-const SHIMMER = '#F5C4AE';
+const ACCENT = '#A78BFA';
+const SHIMMER = '#DDD6FE';
 const TICK_MS = 100;
 
 export function pickVerb(): string {
@@ -49,7 +50,7 @@ export function Spinner({ label, startedAt, tokens, stoppable }: Props) {
     return () => clearInterval(timer);
   }, []);
 
-  const frame = FRAMES[Math.floor(tick / 1.5) % FRAMES.length];
+  const frame = FRAMES[Math.floor(tick / 2) % FRAMES.length];
   const text = `${label}…`;
   // A soft highlight sweeps across the label, with a pause between passes.
   const sweep = (tick % (text.length + 12)) - 3;
