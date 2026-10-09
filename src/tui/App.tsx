@@ -1,5 +1,7 @@
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
+import stringWidth from 'string-width';
+import wrapAnsi from 'wrap-ansi';
 import {
   CONFIG_PATH,
   type Config,
@@ -43,6 +45,8 @@ import { Welcome } from './Welcome.js';
 import { type Connection, type Speed, StatusBar } from './StatusBar.js';
 
 const PROMPT = '❯ ';
+// Background behind sent prompts, so they stand out from replies when scrolling.
+const USER_BACKGROUND = '#2B2540';
 
 type EntryKind = 'welcome' | 'user' | 'assistant' | 'info' | 'error';
 
@@ -809,7 +813,7 @@ export default function App({ config, providerName, modelOverride, version, clea
       <Static key={transcriptKey} items={entries}>
         {(entry) => (
           <Box key={entry.id} marginBottom={1}>
-            <EntryView entry={entry} width={width} version={version} />
+            <EntryView entry={entry} width={width} columns={columns} version={version} />
           </Box>
         )}
       </Static>
@@ -850,22 +854,49 @@ export default function App({ config, providerName, modelOverride, version, clea
   );
 }
 
-function EntryView({ entry, width, version }: { entry: Entry; width: number; version: string }) {
+interface EntryViewProps {
+  entry: Entry;
+  /** Width for replies, which keep a small right margin. */
+  width: number;
+  /** Full terminal width, for the prompt's background band. */
+  columns: number;
+  version: string;
+}
+
+/** A sent prompt on a full-width background band, wrapped with a hanging indent. */
+function UserMessage({ text, files, columns }: { text: string; files?: string; columns: number }) {
+  const inner = Math.max(10, columns - PROMPT.length);
+  const rows = [
+    ...wrapAnsi(text, inner, { hard: true })
+      .split('\n')
+      .map((line, i) => ({ prefix: i === 0 ? PROMPT : '  ', line, dim: false })),
+    ...(files
+      ? wrapAnsi(files, inner, { hard: true })
+          .split('\n')
+          .map((line) => ({ prefix: '  ', line, dim: true }))
+      : []),
+  ];
+  return (
+    <Box flexDirection="column">
+      {rows.map(({ prefix, line, dim }, i) => (
+        <Text key={i} backgroundColor={USER_BACKGROUND}>
+          <Text color="cyan" bold>
+            {prefix}
+          </Text>
+          <Text dimColor={dim}>{line}</Text>
+          {' '.repeat(Math.max(0, inner - stringWidth(line)))}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+function EntryView({ entry, width, columns, version }: EntryViewProps) {
   switch (entry.kind) {
     case 'welcome':
       return <Welcome version={version} provider={entry.provider} model={entry.model} width={width} />;
     case 'user':
-      return (
-        <Box flexDirection="column">
-          <Text>
-            <Text color="cyan" bold>
-              {PROMPT}
-            </Text>
-            {entry.text}
-          </Text>
-          {entry.files && <Text dimColor>{'  ' + entry.files}</Text>}
-        </Box>
-      );
+      return <UserMessage text={entry.text} files={entry.files} columns={columns} />;
     case 'assistant':
       return <Text>{renderMarkdown(entry.text, width, entry.renderer)}</Text>;
     case 'error':
