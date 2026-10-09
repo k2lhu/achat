@@ -13,7 +13,7 @@ import { listModels, streamChat } from '../core/client.js';
 import type { ChatMessage, Endpoint } from '../core/types.js';
 import AddProvider, { type AddedProvider } from './AddProvider.js';
 import { SelectList } from './components.js';
-import { renderMarkdown } from './markdown.js';
+import { isRenderer, RENDERER_DESCRIPTIONS, type Renderer, RENDERERS, renderMarkdown } from './markdown/index.js';
 
 type EntryKind = 'user' | 'assistant' | 'info' | 'error';
 
@@ -21,6 +21,8 @@ interface Entry {
   id: number;
   kind: EntryKind;
   text: string;
+  /** Renderer used for assistant replies, fixed when the entry is added. */
+  renderer: Renderer;
 }
 
 type Mode =
@@ -29,7 +31,8 @@ type Mode =
   | { type: 'providers' }
   | { type: 'remove' }
   | { type: 'confirmRemove'; name: string }
-  | { type: 'models'; ids: string[] };
+  | { type: 'models'; ids: string[] }
+  | { type: 'renderer' };
 
 const HELP = `Commands:
   /provider          pick, add or remove a provider
@@ -39,10 +42,11 @@ const HELP = `Commands:
   /model             pick a model from the current provider
   /model <name>      switch to a model by name
   /system [text|off] show, set or remove the system prompt
+  /renderer [name]   switch markdown rendering: new or classic
   /clear             forget the conversation and start fresh
   /help              show this help
   /quit              exit (or Ctrl+C)
-Model and system prompt changes last for this session only.
+Model, system prompt and renderer changes last for this session only.
 Press Esc while a reply is streaming to stop it.
 Nothing is saved: the conversation disappears when you quit.`;
 
@@ -51,7 +55,8 @@ function errorMessage(error: unknown): string {
 }
 
 function terminalSize() {
-  return { columns: process.stdout.columns ?? 80, rows: process.stdout.rows ?? 24 };
+  // Some terminals report 0 when the size is unknown; treat that like "not set".
+  return { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
 }
 
 interface Props {
@@ -71,7 +76,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
   const [systemPrompt, setSystemPrompt] = useState(initialProvider?.systemPrompt);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [entries, setEntries] = useState<Entry[]>(() => [
-    { id: 0, kind: 'info', text: 'achat · type /help for commands · nothing is saved' },
+    { id: 0, kind: 'info', text: 'achat · type /help for commands · nothing is saved', renderer: config.renderer },
   ]);
   const [mode, setMode] = useState<Mode>(() =>
     config.providers.length ? { type: 'chat' } : { type: 'add' },
@@ -79,13 +84,14 @@ export default function App({ config, providerName, modelOverride }: Props) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState<string | null>(null);
+  const [renderer, setRenderer] = useState<Renderer>(config.renderer);
 
   const nextId = useRef(1);
   const abortRef = useRef<AbortController | null>(null);
   const keyCache = useRef(new Map<string, string | undefined>());
 
   const add = (kind: EntryKind, text: string) =>
-    setEntries((current) => [...current, { id: nextId.current++, kind, text }]);
+    setEntries((current) => [...current, { id: nextId.current++, kind, text, renderer }]);
 
   const backToChat = () => setMode({ type: 'chat' });
 
@@ -212,6 +218,11 @@ export default function App({ config, providerName, modelOverride }: Props) {
     }
   }
 
+  function switchRenderer(next: Renderer) {
+    setRenderer(next);
+    add('info', `Renderer: ${next}. Applies to new replies; earlier ones stay as they were.`);
+  }
+
   async function openModelPicker() {
     if (!provider) return;
     setBusy(true);
@@ -293,6 +304,16 @@ export default function App({ config, providerName, modelOverride }: Props) {
         }
         return;
 
+      case 'renderer':
+      case 'render':
+        if (!arg) return setMode({ type: 'renderer' });
+        if (!isRenderer(arg)) {
+          add('error', `Unknown renderer "${arg}". Choose ${RENDERERS.join(' or ')}.`);
+          return;
+        }
+        switchRenderer(arg);
+        return;
+
       default:
         add('error', `Unknown command /${name}. Type /help for the list.`);
     }
@@ -315,7 +336,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
   // a long reply while it streams. The full reply is printed once it's done.
   let liveReply: string | null = null;
   if (streaming) {
-    const lines = renderMarkdown(streaming, width).split('\n');
+    const lines = renderMarkdown(streaming, width, renderer).split('\n');
     liveReply = lines.slice(-Math.max(3, rows - 6)).join('\n');
   }
 
@@ -397,6 +418,24 @@ export default function App({ config, providerName, modelOverride }: Props) {
           />
         );
 
+      case 'renderer':
+        return (
+          <SelectList<Renderer>
+            title="Markdown renderer"
+            choices={RENDERERS.map((r) => ({
+              label: r,
+              value: r,
+              hint: RENDERER_DESCRIPTIONS[r] + (r === renderer ? ' · current' : ''),
+            }))}
+            initialValue={renderer}
+            onSelect={(next) => {
+              backToChat();
+              if (next !== renderer) switchRenderer(next);
+            }}
+            onCancel={backToChat}
+          />
+        );
+
       case 'chat':
         return busy ? (
           <Text dimColor>
@@ -459,7 +498,7 @@ function EntryView({ entry, width }: { entry: Entry; width: number }) {
         </Text>
       );
     case 'assistant':
-      return <Text>{renderMarkdown(entry.text, width)}</Text>;
+      return <Text>{renderMarkdown(entry.text, width, entry.renderer)}</Text>;
     case 'error':
       return <Text color="red">{entry.text}</Text>;
     case 'info':

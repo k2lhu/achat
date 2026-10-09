@@ -1,3 +1,6 @@
+// The original renderer, built on marked-terminal. Kept as an alternative to
+// the native renderer in ./new.ts; switch with /renderer or `renderer` in the config.
+
 import { Marked, type MarkedExtension, type Tokens } from 'marked';
 import { markedTerminal } from 'marked-terminal';
 

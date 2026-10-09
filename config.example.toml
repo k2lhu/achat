@@ -14,6 +14,10 @@
 
 default = "openai"
 
+# Markdown renderer: "new" (default) or "classic" (the original marked-terminal look).
+# Switch during a session with /renderer. Top-level settings must come before [providers].
+# renderer = "classic"
+
 [providers.openai]
 base_url = "https://api.openai.com/v1"
 api_key = "keychain:openai"

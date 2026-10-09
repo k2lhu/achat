@@ -28,8 +28,12 @@ achat -p ollama -m qwen3   # pick provider and model
 npm run dev                # run from source without building
 ```
 
-Inside the chat, type `/help` for commands: `/provider`, `/model`, `/system`, `/clear`,
-`/quit`. Press Esc to stop a reply mid-stream.
+Inside the chat, type `/help` for commands: `/provider`, `/model`, `/system`, `/renderer`,
+`/clear`, `/quit`. Press Esc to stop a reply mid-stream.
+
+Replies are rendered as markdown. `/renderer` switches between `new` (achat's own layout)
+and `classic` (the original marked-terminal look); set `renderer = "classic"` at the top of
+the config to make it the default.
 
 ## Layout
 
@@ -37,7 +41,7 @@ Inside the chat, type `/help` for commands: `/provider`, `/model`, `/system`, `/
 src/
   core/      platform-neutral: API clients and types (fetch + the Anthropic SDK)
   config.ts  Node/macOS: config file and Keychain access
-  tui/       Ink terminal interface
+  tui/       Ink terminal interface; markdown/ holds the two renderers
   cli.tsx    entry point
 ```
 

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { parse, stringify } from 'smol-toml';
 import type { ApiKind } from './core/types.js';
+import { isRenderer, type Renderer, RENDERERS } from './tui/markdown/index.js';
 
 const run = promisify(execFile);
 
@@ -35,6 +36,8 @@ export interface Config {
   /** Undefined only when there are no providers yet. */
   defaultProvider?: string;
   providers: Provider[];
+  /** Markdown renderer to start with. */
+  renderer: Renderer;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,7 +88,7 @@ async function writeConfigText(text: string): Promise<void> {
 /** Loads the config. A missing file means "no providers yet", not an error. */
 export async function loadConfig(): Promise<Config> {
   const text = await readConfigText();
-  if (text === undefined) return { providers: [] };
+  if (text === undefined) return { providers: [], renderer: 'new' };
 
   let raw: Record<string, unknown>;
   try {
@@ -103,9 +106,13 @@ export async function loadConfig(): Promise<Config> {
     throw new ConfigError(`default = "${defaultProvider}" does not match any provider`);
   }
   defaultProvider ??= providers[0]?.name;
-  return { defaultProvider, providers };
-}
 
+  const renderer = optionalString(raw.renderer, 'renderer') ?? 'new';
+  if (!isRenderer(renderer)) {
+    throw new ConfigError(`renderer must be one of: ${RENDERERS.map((r) => `"${r}"`).join(', ')}`);
+  }
+  return { defaultProvider, providers, renderer };
+}
 
 // --- Editing the config file ------------------------------------------------
 // Edits are done on the text so comments and formatting the user added survive.
