@@ -5,7 +5,17 @@
 import { getAnthropicModelInfo, listAnthropicModels, streamAnthropic } from './anthropic.js';
 import { ApiError } from './errors.js';
 import { parseRateLimit } from './ratelimit.js';
-import type { ChatMessage, ChatOptions, EffortSupport, Endpoint, ModelInfo, StreamEvent, Usage } from './types.js';
+import { getVeniceAccount } from './venice.js';
+import type {
+  Account,
+  ChatMessage,
+  ChatOptions,
+  EffortSupport,
+  Endpoint,
+  ModelInfo,
+  StreamEvent,
+  Usage,
+} from './types.js';
 
 export { ApiError };
 
@@ -68,6 +78,11 @@ export async function getModelInfo(
   const { models, rateLimit } = await fetchOpenAIModels(endpoint, signal);
   const entry = models.find((m) => m.id === model);
   return { ...(entry ? modelInfoFromListing(entry) : {}), rateLimit };
+}
+
+/** Balance and limits for providers that report them (currently Venice). */
+export async function getAccount(endpoint: Endpoint, model: string, signal?: AbortSignal): Promise<Account | undefined> {
+  return endpoint.kind === 'venice' ? getVeniceAccount(endpoint, model, signal) : undefined;
 }
 
 // Servers that reject `stream_options` usually say so in the error message.

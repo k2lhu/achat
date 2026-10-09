@@ -9,6 +9,7 @@ import {
 } from '../config.js';
 import { ANTHROPIC_BASE_URL, ANTHROPIC_DEFAULT_MODEL } from '../core/anthropic.js';
 import { listModels, OPENAI_BASE_URL } from '../core/client.js';
+import { VENICE_BASE_URL } from '../core/venice.js';
 import type { ApiKind } from '../core/types.js';
 import { type Choice, Prompt, SelectList } from './components.js';
 import { Spinner } from './Spinner.js';
@@ -39,6 +40,14 @@ const MAIN_PRESETS: Preset[] = [
     baseUrl: ANTHROPIC_BASE_URL,
     keyRequired: true,
     suggestedModel: ANTHROPIC_DEFAULT_MODEL,
+  },
+  {
+    label: 'Venice',
+    hint: 'private, shows your balance',
+    kind: 'venice',
+    name: 'venice',
+    baseUrl: VENICE_BASE_URL,
+    keyRequired: true,
   },
 ];
 
@@ -171,7 +180,7 @@ export default function AddProvider({ existingNames, onDone, onCancel }: Props) 
         <SelectList<Preset | 'compatible'>
           title="Which service?"
           choices={[
-            ...MAIN_PRESETS.map((p) => ({ label: p.label, value: p })),
+            ...MAIN_PRESETS.map((p) => ({ label: p.label, hint: p.hint, value: p })),
             { label: 'Other', hint: 'OpenRouter, Ollama, LM Studio, Jan, custom…', value: 'compatible' },
           ]}
           onSelect={(v) => (v === 'compatible' ? setStep('preset') : choosePreset(v))}
@@ -236,7 +245,7 @@ export default function AddProvider({ existingNames, onDone, onCancel }: Props) 
         <Prompt
           key="url"
           label="API base URL"
-          hint={preset.kind === 'openai' ? 'Usually ends in /v1.' : undefined}
+          hint={preset.kind === 'anthropic' ? undefined : 'Usually ends in /v1.'}
           placeholder="https://api.example.com/v1"
           validate={validateUrl}
           onSubmit={(v) => {

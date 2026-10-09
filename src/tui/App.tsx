@@ -8,9 +8,10 @@ import {
   removeProvider,
   resolveApiKey,
 } from '../config.js';
-import { getModelInfo, listModels, STANDARD_EFFORT_LEVELS, streamChat } from '../core/client.js';
+import { getAccount, getModelInfo, listModels, STANDARD_EFFORT_LEVELS, streamChat } from '../core/client.js';
 import { costOf } from '../core/pricing.js';
-import type { ChatMessage, EffortParam, Endpoint, ModelInfo, RateLimit, Usage } from '../core/types.js';
+import { mergeRateLimit } from '../core/ratelimit.js';
+import type { Balance, ChatMessage, EffortParam, Endpoint, ModelInfo, RateLimit, Usage } from '../core/types.js';
 import AddProvider, { type AddedProvider } from './AddProvider.js';
 import { ChatInput } from './ChatInput.js';
 import { completionFor } from './completion.js';
@@ -107,6 +108,7 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
   const [rateLimit, setRateLimit] = useState<RateLimit>();
   const [speed, setSpeed] = useState<Speed>();
   const [effort, setEffort] = useState<string>();
+  const [balance, setBalance] = useState<Balance>();
   // Which provider/model the fields above describe. Until the lookup for a new
   // one finishes, the status bar shows "connecting" instead of stale values.
   const currentKey = provider ? `${provider.name}\n${model}` : '';
@@ -179,16 +181,18 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
     setModelInfo(undefined);
     setRateLimit(undefined);
     setSpeed(undefined);
+    setBalance(undefined);
     if (!provider || !model) return;
     setConnection('connecting');
     const controller = new AbortController();
+    refreshAccount(provider, model, controller.signal);
     endpointFor(provider)
       .then((endpoint) => getModelInfo(endpoint, model, controller.signal))
       .then((info) => {
         if (controller.signal.aborted) return;
         setLoadedKey(currentKey);
         setModelInfo(info);
-        setRateLimit(info.rateLimit);
+        setRateLimit((current) => mergeRateLimit(current, info.rateLimit));
         setConnection('connected');
         // Keep a chosen effort only if the new model accepts it.
         setEffort((current) => {
@@ -205,6 +209,20 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
       });
     return () => controller.abort();
   }, [provider, model]);
+
+  /** Updates balance and limits in the status bar; optional, so failures are ignored. */
+  function refreshAccount(p: Provider, forModel: string, signal?: AbortSignal) {
+    if (p.kind !== 'venice') return;
+    endpointFor(p)
+      .then((endpoint) => getAccount(endpoint, forModel, signal))
+      .then((account) => {
+        if (signal?.aborted || !account) return;
+        setBalance(account.balance);
+        // Live remaining counts from response headers take precedence over the plain limits.
+        setRateLimit((current) => mergeRateLimit(account.rateLimit, current));
+      })
+      .catch(() => {});
+  }
 
   function effortParam(): EffortParam {
     return modelInfo?.effort?.param ?? (provider?.kind === 'anthropic' ? 'output_config' : 'reasoning_effort');
@@ -275,7 +293,7 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
         } else if (event.type === 'usage') {
           usage = event.usage;
         } else {
-          setRateLimit(event.rateLimit);
+          setRateLimit((current) => mergeRateLimit(current, event.rateLimit));
         }
       }
       setConnection('connected');
@@ -300,6 +318,7 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
         tokensPerSecond: seconds >= 0.1 ? outputTokens / seconds : undefined,
       });
     }
+    refreshAccount(provider, model);
     if (usage) {
       const cost = costOf(usage, provider.prices?.[model] ?? modelInfo?.price);
       if (cost !== undefined) setSessionCost((total) => (total ?? 0) + cost);
@@ -714,6 +733,7 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
               speed: loaded ? speed : undefined,
               // Show $0 up front when the price is known, so cost is visible before the first reply.
               sessionCost: sessionCost ?? (provider.prices?.[model] ?? modelInfo?.price ? 0 : undefined),
+              balance: loaded ? balance : undefined,
             }}
           />
         </Box>

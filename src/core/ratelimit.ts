@@ -8,6 +8,14 @@ function number(headers: Headers, ...names: string[]): number | undefined {
   return undefined;
 }
 
+/** Combines two readings, preferring values from `next` where it has them. */
+export function mergeRateLimit(previous: RateLimit | undefined, next: RateLimit | undefined): RateLimit | undefined {
+  if (!next) return previous;
+  if (!previous) return next;
+  const defined = Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined));
+  return { ...previous, ...defined };
+}
+
 /** Reads rate-limit headers (OpenAI/Venice/OpenRouter style and Anthropic style). */
 export function parseRateLimit(headers: Headers): RateLimit | undefined {
   const limit: RateLimit = {

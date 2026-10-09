@@ -7,8 +7,8 @@ export interface ChatMessage {
   content: string;
 }
 
-/** Which wire protocol an endpoint speaks. */
-export type ApiKind = 'openai' | 'anthropic';
+/** Which API an endpoint speaks. Venice is OpenAI-compatible plus account balance. */
+export type ApiKind = 'openai' | 'anthropic' | 'venice';
 
 /** Where to send requests. `apiKey` is optional for local servers. */
 export interface Endpoint {
@@ -53,6 +53,22 @@ export interface ChatOptions {
   signal?: AbortSignal;
   /** Reasoning effort to request; omitted means the model's default. */
   effort?: { level: string; param: EffortParam };
+}
+
+/** Money left on the account, for APIs that report it. */
+export interface Balance {
+  usd?: number;
+  /** Venice's DIEM token balance. */
+  diem?: number;
+  /** Prepaid plan credits, in USD. */
+  credits?: number;
+}
+
+/** Account details for providers that report them. */
+export interface Account {
+  balance?: Balance;
+  /** Per-minute limits (no remaining counts). */
+  rateLimit?: RateLimit;
 }
 
 /** USD per million tokens. */

@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
-import type { EffortSupport, RateLimit, Usage } from '../core/types.js';
+import stringWidth from 'string-width';
+import type { Balance, EffortSupport, RateLimit, Usage } from '../core/types.js';
 
 export function formatTokens(count: number): string {
   if (count < 1000) return String(count);
@@ -67,6 +68,8 @@ export interface StatusInfo {
   speed?: Speed;
   /** Total spent this session; undefined when no cost can be known. */
   sessionCost?: number;
+  /** Money left on the account, for providers that report it. */
+  balance?: Balance;
 }
 
 interface Segment {
@@ -75,7 +78,7 @@ interface Segment {
 }
 
 function segment(plain: string, node: ReactNode = <Text dimColor>{plain}</Text>): Segment {
-  return { width: plain.length, node };
+  return { width: stringWidth(plain), node };
 }
 
 function connectionSegment({ baseUrl, connection }: StatusInfo): Segment {
@@ -108,14 +111,22 @@ function effortSegment({ effortSupport, effort, connection }: StatusInfo): Segme
 }
 
 function rateLimitSegment({ rateLimit }: StatusInfo): Segment {
+  // Before any reply some providers only tell us the per-minute limits.
+  if (rateLimit?.requestsRemaining === undefined && rateLimit?.tokensRemaining === undefined) {
+    const limits = [
+      rateLimit?.requestsLimit !== undefined && `${formatTokens(rateLimit.requestsLimit)} req/min`,
+      rateLimit?.tokensLimit !== undefined && `${formatTokens(rateLimit.tokensLimit)} tok/min`,
+    ].filter(Boolean);
+    return segment(limits.length ? limits.join(' · ') : 'limits —');
+  }
+
   const parts: { label: string; remaining: number; limit?: number }[] = [];
-  if (rateLimit?.requestsRemaining !== undefined) {
+  if (rateLimit.requestsRemaining !== undefined) {
     parts.push({ label: 'req', remaining: rateLimit.requestsRemaining, limit: rateLimit.requestsLimit });
   }
-  if (rateLimit?.tokensRemaining !== undefined) {
+  if (rateLimit.tokensRemaining !== undefined) {
     parts.push({ label: 'tok', remaining: rateLimit.tokensRemaining, limit: rateLimit.tokensLimit });
   }
-  if (parts.length === 0) return segment('limits —');
 
   const text = (p: (typeof parts)[number]) =>
     `${formatTokens(p.remaining)}${p.limit ? `/${formatTokens(p.limit)}` : ''}`;
@@ -183,6 +194,23 @@ function costSegment({ sessionCost }: StatusInfo): Segment {
   return segment(cost, <Text color="yellow">{cost}</Text>);
 }
 
+function balanceSegment({ balance }: StatusInfo): Segment | undefined {
+  if (!balance) return undefined;
+  const parts: string[] = [];
+  if (balance.usd !== undefined) parts.push(formatCost(balance.usd));
+  if (balance.diem) parts.push(`${balance.diem.toLocaleString('en-US', { maximumFractionDigits: 2 })} DIEM`);
+  if (balance.credits) parts.push(`${formatCost(balance.credits)} credits`);
+  if (parts.length === 0) return undefined;
+  const text = parts.join(' · ');
+  return segment(
+    `🪙 ${text} left`,
+    <Text>
+      🪙 <Text color="green">{text}</Text>
+      <Text dimColor> left</Text>
+    </Text>,
+  );
+}
+
 /** Fits segments into lines no wider than `columns`, wrapping where needed. */
 function flow(segments: Segment[], columns: number): Segment[][] {
   const separator = 3;
@@ -216,7 +244,9 @@ export function StatusBar({ info, columns }: { info: StatusInfo; columns: number
       info.systemPrompt ? segment('system on', <Text color="yellow">system on</Text>) : segment('system off'),
       rateLimitSegment(info),
     ],
-    [contextSegment(info), tokensSegment(info), speedSegment(info), costSegment(info)],
+    [contextSegment(info), tokensSegment(info), speedSegment(info), costSegment(info), balanceSegment(info)].filter(
+      (item): item is Segment => item !== undefined,
+    ),
   ];
 
   return (

@@ -1,6 +1,6 @@
 # achat
 
-A minimal, private terminal chat for Anthropic and any OpenAI-compatible API (OpenAI,
+A minimal, private terminal chat for Anthropic, Venice and any OpenAI-compatible API (OpenAI,
 OpenRouter, Groq, Ollama, LM Studio, Jan's local server, …).
 
 - No telemetry, no logs, no chat history on disk. Conversations live in memory and are gone when you quit.
@@ -37,6 +37,9 @@ directly and `/effort default` goes back to the model's own setting. Models with
 support say so; where the API doesn't report support (e.g. OpenAI, local servers) you can
 still set a level, but it may be rejected. The choice lasts for the session and shows in the
 status bar.
+
+For Venice providers the status bar also shows the account balance left (🪙) next to the
+session cost, and the model's per-minute limits before the first reply.
 
 Replies are rendered as markdown. `/renderer` switches between `new` (achat's own layout)
 and `classic` (the original marked-terminal look); set `renderer = "classic"` at the top of
