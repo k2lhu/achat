@@ -28,8 +28,15 @@ achat -p ollama -m qwen3   # pick provider and model
 npm run dev                # run from source without building
 ```
 
-Inside the chat, type `/help` for commands: `/provider`, `/model`, `/system`, `/renderer`,
-`/clear`, `/quit`. Press Esc to stop a reply mid-stream.
+Inside the chat, type `/help` for commands: `/provider`, `/model`, `/effort`, `/system`,
+`/renderer`, `/clear`, `/quit`. Press Esc to stop a reply mid-stream.
+
+`/effort` sets the reasoning effort for the current model. On its own it lists the levels
+the model supports (as reported by Anthropic, Venice and OpenRouter); `/effort high` sets one
+directly and `/effort default` goes back to the model's own setting. Models without effort
+support say so; where the API doesn't report support (e.g. OpenAI, local servers) you can
+still set a level, but it may be rejected. The choice lasts for the session and shows in the
+status bar.
 
 Replies are rendered as markdown. `/renderer` switches between `new` (achat's own layout)
 and `classic` (the original marked-terminal look); set `renderer = "classic"` at the top of
