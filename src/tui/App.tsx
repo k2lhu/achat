@@ -16,6 +16,7 @@ import type {
   Attachment,
   Balance,
   ChatMessage,
+  Plan,
   EffortParam,
   Endpoint,
   ModelInfo,
@@ -91,6 +92,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The smallest of the known values, or undefined if none is known. */
+function smallest(...values: (number | undefined)[]): number | undefined {
+  const known = values.filter((v): v is number => v !== undefined);
+  return known.length ? Math.min(...known) : undefined;
+}
+
 function terminalSize() {
   // Some terminals report 0 when the size is unknown; treat that like "not set".
   return { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
@@ -143,6 +150,7 @@ export default function App({ config, providerName, modelOverride, version, clea
   const [speed, setSpeed] = useState<Speed>();
   const [effort, setEffort] = useState<string>();
   const [balance, setBalance] = useState<Balance>();
+  const [plan, setPlan] = useState<Plan>();
   // Which provider/model the fields above describe. Until the lookup for a new
   // one finishes, the status bar shows "connecting" instead of stale values.
   const currentKey = provider ? `${provider.name}\n${model}` : '';
@@ -246,6 +254,7 @@ export default function App({ config, providerName, modelOverride, version, clea
     setRateLimit(undefined);
     setSpeed(undefined);
     setBalance(undefined);
+    setPlan(undefined);
     if (!provider || !model) return;
     setConnection('connecting');
     const controller = new AbortController();
@@ -276,12 +285,13 @@ export default function App({ config, providerName, modelOverride, version, clea
 
   /** Updates balance and limits in the status bar; optional, so failures are ignored. */
   function refreshAccount(p: Provider, forModel: string, signal?: AbortSignal) {
-    if (p.kind !== 'venice') return;
+    if (p.kind !== 'venice' && p.kind !== 'featherless') return;
     endpointFor(p)
       .then((endpoint) => getAccount(endpoint, forModel, signal))
       .then((account) => {
         if (signal?.aborted || !account) return;
         setBalance(account.balance);
+        setPlan(account.plan);
         // Live remaining counts from response headers take precedence over the plain limits.
         setRateLimit((current) => mergeRateLimit(account.rateLimit, current));
       })
@@ -825,11 +835,13 @@ export default function App({ config, providerName, modelOverride, version, clea
               effort,
               rateLimit: loaded ? rateLimit : undefined,
               lastUsage,
-              contextWindow: loaded ? modelInfo?.contextWindow : undefined,
+              // A plan may cap the context below the model's own window.
+              contextWindow: loaded ? smallest(modelInfo?.contextWindow, plan?.maxContextLength) : undefined,
               speed: loaded ? speed : undefined,
               // Show $0 up front when the price is known, so cost is visible before the first reply.
               sessionCost: sessionCost ?? (provider.prices?.[model] ?? modelInfo?.price ? 0 : undefined),
               balance: loaded ? balance : undefined,
+              plan: loaded && plan ? { ...plan, modelUnits: modelInfo?.concurrencyCost } : undefined,
             }}
           />
         </Box>

@@ -59,8 +59,8 @@ function toProvider(name: string, raw: unknown): Provider {
   const kind = optionalString(raw.type, `providers.${name}.type`) ?? 'openai';
   if (!baseUrl) throw new ConfigError(`[providers.${name}] is missing base_url`);
   if (!model) throw new ConfigError(`[providers.${name}] is missing model`);
-  if (kind !== 'openai' && kind !== 'anthropic' && kind !== 'venice') {
-    throw new ConfigError(`[providers.${name}] type must be "openai", "anthropic" or "venice"`);
+  if (kind !== 'openai' && kind !== 'anthropic' && kind !== 'venice' && kind !== 'featherless') {
+    throw new ConfigError(`[providers.${name}] type must be "openai", "anthropic", "venice" or "featherless"`);
   }
   return {
     name,

@@ -1,7 +1,7 @@
 # achat
 
-A minimal, private terminal chat for Anthropic, Venice and any OpenAI-compatible API (OpenAI,
-OpenRouter, Groq, Ollama, LM Studio, Jan's local server, …).
+A minimal, private terminal chat for Anthropic, Venice, Featherless and any OpenAI-compatible API
+(OpenAI, OpenRouter, Groq, Ollama, LM Studio, Jan's local server, …).
 
 - No telemetry, no logs, no chat history on disk. Conversations live in memory and are gone when you quit.
 - API keys are read from the macOS Keychain or environment variables, never stored in the config.
@@ -68,10 +68,13 @@ ctx 0/128k ▱▱▱▱▱▱▱▱ 0% │ ↑ 0 ↓ 0 │ ⚡ — │ $0 │ �
 
 - **Line 1:** `local` or `cloud` (dot: yellow connecting, green connected, red offline),
   provider, model, reasoning effort in yellow (hidden if the model has none), and rate
-  limits: per-minute limits until the first reply, then requests/tokens remaining.
-- **Line 2:** conversation size against the model's context window, tokens in/out of the
-  last reply, speed (time to first token, tokens per second), session cost, and for Venice
-  the account balance left (🪙).
+  limits: per-minute limits until the first reply, then requests/tokens remaining. For
+  Featherless this slot shows your plan and the concurrency units the model uses, e.g.
+  `Feather Premium · 2/4 units`.
+- **Line 2:** conversation size against the model's context window (capped by your plan on
+  Featherless), tokens in/out of the last reply, speed (time to first token, tokens per
+  second), session cost (`flat plan` on Featherless), and for Venice the account balance
+  left (🪙).
 
 Costs come from the API (OpenRouter, Venice), Anthropic's list prices, or `prices` in the
 config; they're estimates.

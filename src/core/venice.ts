@@ -16,7 +16,7 @@ function amount(value: unknown): number | undefined {
 export async function getVeniceAccount(endpoint: Endpoint, model: string, signal?: AbortSignal): Promise<Account> {
   const url = endpoint.baseUrl.replace(/\/+$/, '') + '/api_keys/rate_limits';
   const res = await fetch(url, {
-    headers: endpoint.apiKey ? { Authorization: `Bearer ${endpoint.apiKey}` } : {},
+    headers: { 'User-Agent': 'achat', ...(endpoint.apiKey ? { Authorization: `Bearer ${endpoint.apiKey}` } : {}) },
     signal,
   });
   if (!res.ok) throw new ApiError(res.status, `${res.status}: could not read the Venice account`);

@@ -9,6 +9,7 @@ import {
 } from '../config.js';
 import { ANTHROPIC_BASE_URL, ANTHROPIC_DEFAULT_MODEL } from '../core/anthropic.js';
 import { listModels, OPENAI_BASE_URL } from '../core/client.js';
+import { FEATHERLESS_BASE_URL } from '../core/featherless.js';
 import { VENICE_BASE_URL } from '../core/venice.js';
 import type { ApiKind } from '../core/types.js';
 import { type Choice, Prompt, SelectList } from './components.js';
@@ -47,6 +48,14 @@ const MAIN_PRESETS: Preset[] = [
     kind: 'venice',
     name: 'venice',
     baseUrl: VENICE_BASE_URL,
+    keyRequired: true,
+  },
+  {
+    label: 'Featherless',
+    hint: 'open models, flat-rate plans',
+    kind: 'featherless',
+    name: 'featherless',
+    baseUrl: FEATHERLESS_BASE_URL,
     keyRequired: true,
   },
 ];

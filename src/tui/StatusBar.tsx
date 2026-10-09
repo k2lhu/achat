@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
 import stringWidth from 'string-width';
-import type { Balance, EffortSupport, RateLimit, Usage } from '../core/types.js';
+import type { Balance, EffortSupport, Plan, RateLimit, Usage } from '../core/types.js';
 
 export function formatTokens(count: number): string {
   if (count < 1000) return String(count);
@@ -69,6 +69,8 @@ export interface StatusInfo {
   sessionCost?: number;
   /** Money left on the account, for providers that report it. */
   balance?: Balance;
+  /** Flat-rate plan (Featherless), with the concurrency units the current model uses. */
+  plan?: Plan & { modelUnits?: number };
 }
 
 interface Segment {
@@ -102,7 +104,23 @@ function effortSegment({ effortSupport, effort, connection }: StatusInfo): Segme
   return segment(level, <Text color="yellow">{level}</Text>);
 }
 
-function rateLimitSegment({ rateLimit }: StatusInfo): Segment {
+/** Plan name and concurrency, e.g. "Feather Premium · 1/4 units". */
+function planSegment(plan: NonNullable<StatusInfo['plan']>): Segment {
+  const units =
+    plan.concurrency === undefined
+      ? ''
+      : ` · ${plan.modelUnits !== undefined ? `${plan.modelUnits}/` : ''}${plan.concurrency} units`;
+  return segment(
+    `${plan.name}${units}`,
+    <Text>
+      <Text color="cyan">{plan.name}</Text>
+      <Text dimColor>{units}</Text>
+    </Text>,
+  );
+}
+
+function rateLimitSegment({ rateLimit, plan }: StatusInfo): Segment {
+  if (plan && !rateLimit) return planSegment(plan);
   // Before any reply some providers only tell us the per-minute limits.
   if (rateLimit?.requestsRemaining === undefined && rateLimit?.tokensRemaining === undefined) {
     const limits = [
@@ -180,7 +198,8 @@ function speedSegment({ speed }: StatusInfo): Segment {
   );
 }
 
-function costSegment({ sessionCost }: StatusInfo): Segment {
+function costSegment({ sessionCost, plan }: StatusInfo): Segment {
+  if (plan && sessionCost === undefined) return segment('flat plan');
   if (sessionCost === undefined) return segment('cost —');
   const cost = formatCost(sessionCost);
   return segment(cost, <Text color="yellow">{cost}</Text>);

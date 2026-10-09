@@ -6,6 +6,7 @@ import { getAnthropicModelInfo, listAnthropicModels, streamAnthropic } from './a
 import { toOpenAIMessage } from './attachments.js';
 import { ApiError } from './errors.js';
 import { parseRateLimit } from './ratelimit.js';
+import { getFeatherlessAccount, getFeatherlessModelInfo, listFeatherlessModels } from './featherless.js';
 import { getVeniceAccount } from './venice.js';
 import type {
   Account,
@@ -27,7 +28,8 @@ function url(endpoint: Endpoint, path: string): string {
 }
 
 function headers(endpoint: Endpoint): Record<string, string> {
-  const result: Record<string, string> = { 'Content-Type': 'application/json' };
+  // Some APIs (Featherless) reject requests with Node's default User-Agent.
+  const result: Record<string, string> = { 'Content-Type': 'application/json', 'User-Agent': 'achat' };
   if (endpoint.apiKey) result.Authorization = `Bearer ${endpoint.apiKey}`;
   return result;
 }
@@ -59,6 +61,7 @@ export function streamChat(
 
 /** Lists model IDs the endpoint offers, sorted alphabetically. */
 export async function listModels(endpoint: Endpoint, signal?: AbortSignal): Promise<string[]> {
+  if (endpoint.kind === 'featherless') return listFeatherlessModels(endpoint, signal); // Already sorted by popularity.
   const ids =
     endpoint.kind === 'anthropic'
       ? await listAnthropicModels(endpoint, signal)
@@ -76,14 +79,17 @@ export async function getModelInfo(
   signal?: AbortSignal,
 ): Promise<ModelInfo> {
   if (endpoint.kind === 'anthropic') return getAnthropicModelInfo(endpoint, model, signal);
+  if (endpoint.kind === 'featherless') return getFeatherlessModelInfo(endpoint, model, signal);
   const { models, rateLimit } = await fetchOpenAIModels(endpoint, signal);
   const entry = models.find((m) => m.id === model);
   return { ...(entry ? modelInfoFromListing(entry) : {}), rateLimit };
 }
 
-/** Balance and limits for providers that report them (currently Venice). */
+/** Balance, limits or plan, for providers that report them (Venice, Featherless). */
 export async function getAccount(endpoint: Endpoint, model: string, signal?: AbortSignal): Promise<Account | undefined> {
-  return endpoint.kind === 'venice' ? getVeniceAccount(endpoint, model, signal) : undefined;
+  if (endpoint.kind === 'venice') return getVeniceAccount(endpoint, model, signal);
+  if (endpoint.kind === 'featherless') return getFeatherlessAccount(endpoint, signal);
+  return undefined;
 }
 
 // Servers that reject `stream_options` usually say so in the error message.

@@ -15,8 +15,11 @@ export interface ChatMessage {
   attachments?: Attachment[];
 }
 
-/** Which API an endpoint speaks. Venice is OpenAI-compatible plus account balance. */
-export type ApiKind = 'openai' | 'anthropic' | 'venice';
+/**
+ * Which API an endpoint speaks. Venice and Featherless are OpenAI-compatible,
+ * with extra account details (balance; plan and concurrency).
+ */
+export type ApiKind = 'openai' | 'anthropic' | 'venice' | 'featherless';
 
 /** Where to send requests. `apiKey` is optional for local servers. */
 export interface Endpoint {
@@ -72,11 +75,21 @@ export interface Balance {
   credits?: number;
 }
 
+/** A flat-rate subscription plan, limited by concurrent requests rather than tokens. */
+export interface Plan {
+  name: string;
+  /** Concurrency units the plan allows at once. */
+  concurrency?: number;
+  /** Cap on context length for every model, if the plan sets one. */
+  maxContextLength?: number;
+}
+
 /** Account details for providers that report them. */
 export interface Account {
   balance?: Balance;
   /** Per-minute limits (no remaining counts). */
   rateLimit?: RateLimit;
+  plan?: Plan;
 }
 
 /** USD per million tokens. */
@@ -93,6 +106,8 @@ export interface ModelInfo {
   effort?: EffortSupport | null;
   /** Whether the model accepts images; undefined when the API doesn't say. */
   vision?: boolean;
+  /** Concurrency units one request to this model uses (Featherless). */
+  concurrencyCost?: number;
   /** From the headers of the request that fetched this info. */
   rateLimit?: RateLimit;
 }

@@ -1,8 +1,9 @@
 # achat config, normally written for you by the setup in achat (/provider add).
 # To edit by hand, copy to ~/.config/achat/config.toml.
 #
-# type is "openai" (default; any OpenAI-compatible API), "anthropic" or "venice"
-# (OpenAI-compatible, plus balance and limits in the status bar).
+# type is "openai" (default; any OpenAI-compatible API), "anthropic", "venice" (OpenAI-compatible,
+# plus balance and limits in the status bar) or "featherless" (OpenAI-compatible, plus plan and
+# concurrency units).
 #
 # api_key can be:
 #   "keychain:NAME"  read from macOS Keychain (recommended). Add a key with:
@@ -43,6 +44,12 @@ model = "claude-opus-5-5"
 # base_url = "https://api.venice.ai/api/v1"
 # api_key = "keychain:venice"
 # model = "zai-org-glm-4.7-flash"
+
+# [providers.featherless]
+# type = "featherless"
+# base_url = "https://api.featherless.ai/v1"
+# api_key = "keychain:featherless"
+# model = "google/gemma-3-27b-it"
 
 # [providers.jan]
 # base_url = "http://localhost:1337/v1"   # Jan's local API server (enable it in Jan's settings)
