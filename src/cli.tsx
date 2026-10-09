@@ -35,9 +35,17 @@ async function main() {
     );
   }
 
+  // App needs Ink's clear(), which only exists once render() returns.
+  let clearFrame = () => {};
   const app = render(
-    <App config={config} providerName={providerName} modelOverride={values.model} />,
+    <App
+      config={config}
+      providerName={providerName}
+      modelOverride={values.model}
+      clearFrame={() => clearFrame()}
+    />,
   );
+  clearFrame = app.clear;
   await app.waitUntilExit();
 }
 

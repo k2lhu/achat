@@ -66,13 +66,19 @@ function terminalSize() {
   return { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
 }
 
+// Clear the visible screen and scrollback, cursor to the top left.
+const CLEAR_TERMINAL = '\x1b[2J\x1b[3J\x1b[H';
+const RESIZE_SETTLE_MS = 100;
+
 interface Props {
   config: Config;
   providerName?: string;
   modelOverride?: string;
+  /** Forgets Ink's last frame so the next render draws from scratch. */
+  clearFrame: () => void;
 }
 
-export default function App({ config, providerName, modelOverride }: Props) {
+export default function App({ config, providerName, modelOverride, clearFrame }: Props) {
   const { exit } = useApp();
   const initialProvider = config.providers.find((p) => p.name === providerName);
 
@@ -106,6 +112,35 @@ export default function App({ config, providerName, modelOverride }: Props) {
   const [loadedKey, setLoadedKey] = useState('');
   const loaded = loadedKey === currentKey;
   const [renderer, setRenderer] = useState<Renderer>(config.renderer);
+
+  const [size, setSize] = useState(terminalSize);
+  // Changing this remounts <Static>, which prints the whole conversation again.
+  const [transcriptKey, setTranscriptKey] = useState(0);
+
+  // When the width changes, the terminal re-wraps what's on screen and Ink's
+  // in-place redraw no longer lines up, leaving copies of the input behind.
+  // Once resizing settles, clear the terminal and reprint at the new width.
+  useEffect(() => {
+    let lastColumns = terminalSize().columns;
+    let timer: NodeJS.Timeout | undefined;
+    const onResize = () => {
+      setSize(terminalSize());
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const { columns } = terminalSize();
+        if (columns === lastColumns) return;
+        lastColumns = columns;
+        clearFrame();
+        process.stdout.write(CLEAR_TERMINAL);
+        setTranscriptKey((key) => key + 1);
+      }, RESIZE_SETTLE_MS);
+    };
+    process.stdout.on('resize', onResize);
+    return () => {
+      clearTimeout(timer);
+      process.stdout.off('resize', onResize);
+    };
+  }, []);
 
   const nextId = useRef(1);
   const abortRef = useRef<AbortController | null>(null);
@@ -482,7 +517,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
 
   // --- Rendering --------------------------------------------------------------
 
-  const { columns, rows } = terminalSize();
+  const { columns, rows } = size;
   const width = Math.max(20, columns - 2);
 
   // Ink can't redraw output taller than the screen, so show only the tail of
@@ -639,7 +674,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
 
   return (
     <>
-      <Static items={entries}>
+      <Static key={transcriptKey} items={entries}>
         {(entry) => (
           <Box key={entry.id} marginBottom={1}>
             <EntryView entry={entry} width={width} />
