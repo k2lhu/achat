@@ -18,11 +18,13 @@ import { completionFor } from './completion.js';
 import { SelectList } from './components.js';
 import { isRenderer, RENDERER_DESCRIPTIONS, type Renderer, RENDERERS, renderMarkdown } from './markdown/index.js';
 import { pickVerb, Spinner } from './Spinner.js';
+import { clearTerminal } from './terminal.js';
+import { Welcome } from './Welcome.js';
 import { type Connection, type Speed, StatusBar } from './StatusBar.js';
 
 const PROMPT = '❯ ';
 
-type EntryKind = 'user' | 'assistant' | 'info' | 'error';
+type EntryKind = 'welcome' | 'user' | 'assistant' | 'info' | 'error';
 
 interface Entry {
   id: number;
@@ -30,6 +32,9 @@ interface Entry {
   text: string;
   /** Renderer used for assistant replies, fixed when the entry is added. */
   renderer: Renderer;
+  /** For the welcome box: what it was connected to when shown. */
+  provider?: string;
+  model?: string;
 }
 
 type Mode =
@@ -52,7 +57,7 @@ const HELP = `Commands:
   /system [text|off] show, set or remove the system prompt
   /effort [level]    set reasoning effort (default to use the model's own)
   /renderer [name]   switch markdown rendering: new or classic
-  /clear             forget the conversation and start fresh
+  /clear             forget the conversation and clear the screen
   /help              show this help
   /quit              exit (or Ctrl+C)
 Model, effort, system prompt and renderer changes last for this session only.
@@ -68,19 +73,18 @@ function terminalSize() {
   return { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
 }
 
-// Clear the visible screen and scrollback, cursor to the top left.
-const CLEAR_TERMINAL = '\x1b[2J\x1b[3J\x1b[H';
 const RESIZE_SETTLE_MS = 100;
 
 interface Props {
   config: Config;
   providerName?: string;
   modelOverride?: string;
+  version: string;
   /** Forgets Ink's last frame so the next render draws from scratch. */
   clearFrame: () => void;
 }
 
-export default function App({ config, providerName, modelOverride, clearFrame }: Props) {
+export default function App({ config, providerName, modelOverride, version, clearFrame }: Props) {
   const { exit } = useApp();
   const initialProvider = config.providers.find((p) => p.name === providerName);
 
@@ -91,7 +95,14 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
   const [systemPrompt, setSystemPrompt] = useState(initialProvider?.systemPrompt);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [entries, setEntries] = useState<Entry[]>(() => [
-    { id: 0, kind: 'info', text: 'achat · type /help for commands · nothing is saved', renderer: config.renderer },
+    {
+      id: 0,
+      kind: 'welcome',
+      text: '',
+      renderer: config.renderer,
+      provider: initialProvider?.name,
+      model: modelOverride ?? initialProvider?.model,
+    },
   ]);
   const [mode, setMode] = useState<Mode>(() =>
     config.providers.length ? { type: 'chat' } : { type: 'add' },
@@ -134,7 +145,7 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
         if (columns === lastColumns) return;
         lastColumns = columns;
         clearFrame();
-        process.stdout.write(CLEAR_TERMINAL);
+        clearTerminal();
         setTranscriptKey((key) => key + 1);
       }, RESIZE_SETTLE_MS);
     };
@@ -435,9 +446,16 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
         return;
 
       case 'clear':
+        // Like a fresh start: empty conversation, clean screen, welcome box again.
         setHistory([]);
         setLastUsage(undefined);
-        add('info', 'Conversation cleared. The next message starts fresh.');
+        setSpeed(undefined);
+        clearFrame();
+        clearTerminal();
+        setEntries([
+          { id: nextId.current++, kind: 'welcome', text: '', renderer, provider: provider?.name, model },
+        ]);
+        setTranscriptKey((key) => key + 1);
         return;
 
       case 'model':
@@ -702,7 +720,7 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
       <Static key={transcriptKey} items={entries}>
         {(entry) => (
           <Box key={entry.id} marginBottom={1}>
-            <EntryView entry={entry} width={width} />
+            <EntryView entry={entry} width={width} version={version} />
           </Box>
         )}
       </Static>
@@ -741,8 +759,10 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
   );
 }
 
-function EntryView({ entry, width }: { entry: Entry; width: number }) {
+function EntryView({ entry, width, version }: { entry: Entry; width: number; version: string }) {
   switch (entry.kind) {
+    case 'welcome':
+      return <Welcome version={version} provider={entry.provider} model={entry.model} width={width} />;
     case 'user':
       return (
         <Text>

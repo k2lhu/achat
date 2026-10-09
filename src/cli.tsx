@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import { render } from 'ink';
+import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { CONFIG_PATH, ConfigError, loadConfig } from './config.js';
 import App from './tui/App.js';
+import { clearTerminal } from './tui/terminal.js';
+
+const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 const USAGE = `Usage: achat [options]
 
@@ -35,6 +39,9 @@ async function main() {
     );
   }
 
+  // Start on a clean screen, like a fresh app window.
+  clearTerminal();
+
   // App needs Ink's clear(), which only exists once render() returns.
   let clearFrame = () => {};
   const app = render(
@@ -42,6 +49,7 @@ async function main() {
       config={config}
       providerName={providerName}
       modelOverride={values.model}
+      version={version}
       clearFrame={() => clearFrame()}
     />,
   );
