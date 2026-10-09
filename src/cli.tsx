@@ -52,6 +52,8 @@ async function main() {
       version={version}
       clearFrame={() => clearFrame()}
     />,
+    // Lets terminals that support it (kitty, Ghostty, WezTerm, iTerm2…) report Shift+Enter.
+    { kittyKeyboard: { mode: 'auto', flags: ['disambiguateEscapeCodes'] } },
   );
   clearFrame = app.clear;
   await app.waitUntilExit();

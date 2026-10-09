@@ -31,6 +31,11 @@ npm run dev                # run from source without building
 Inside the chat, type `/help` for commands: `/provider`, `/model`, `/effort`, `/system`,
 `/renderer`, `/clear`, `/quit`. Press Esc to stop a reply mid-stream.
 
+**Editing:** Option+←/→ jump by word; Home/End or Ctrl+A/E jump to the start/end of the line
+(press again for the whole message). For a new line use Shift+Enter (in terminals that report
+it, e.g. kitty, Ghostty, WezTerm, iTerm2), Option+Enter, or `\` then Enter. Up/Down move
+between lines and recall earlier prompts. Pasted text keeps its line breaks.
+
 `/effort` sets the reasoning effort for the current model. On its own it lists the levels
 the model supports (as reported by Anthropic, Venice and OpenRouter); `/effort high` sets one
 directly and `/effort default` goes back to the model's own setting. Models without effort

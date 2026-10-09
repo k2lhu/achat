@@ -89,7 +89,10 @@ const HELP = `Commands:
 Model, effort, system prompt and renderer changes last for this session only.
 Attach files with @path (Tab completes), by dragging them onto the window, or paste
 an image or a copied file with Ctrl+V. Text, code, images and PDFs are supported.
-Tab completes commands. Up/Down recall earlier prompts. Press Esc while a reply is streaming to stop it.
+Editing: Option+←/→ jump by word, Home/End or Ctrl+A/E jump to the start/end of the line
+(again for the whole message). New line: Shift+Enter (if your terminal supports it),
+Option+Enter, or \ then Enter. Tab completes commands. Up/Down move between lines and
+recall earlier prompts. Press Esc while a reply is streaming to stop it.
 Nothing is saved: the conversation disappears when you quit.`;
 
 function errorMessage(error: unknown): string {
@@ -312,29 +315,35 @@ export default function App({ config, providerName, modelOverride, version, clea
 
   useInput((_input, key) => {
     if (key.escape) abortRef.current?.abort();
-    if (mode.type !== 'chat' || busy) return;
-
-    const entries = promptHistory.current;
-    if (key.upArrow && entries.length) {
-      if (historyIndex.current === null) {
-        draft.current = input;
-        historyIndex.current = entries.length - 1;
-      } else if (historyIndex.current > 0) {
-        historyIndex.current--;
-      } else {
-        return;
-      }
-      recall(entries[historyIndex.current]!);
-    } else if (key.downArrow && historyIndex.current !== null) {
-      if (historyIndex.current < entries.length - 1) {
-        historyIndex.current++;
-        recall(entries[historyIndex.current]!);
-      } else {
-        historyIndex.current = null;
-        recall(draft.current);
-      }
-    }
   });
+
+  /** Up on the input's first line: an earlier prompt (the draft is kept for Down). */
+  function historyUp() {
+    const entries = promptHistory.current;
+    if (!entries.length) return;
+    if (historyIndex.current === null) {
+      draft.current = input;
+      historyIndex.current = entries.length - 1;
+    } else if (historyIndex.current > 0) {
+      historyIndex.current--;
+    } else {
+      return;
+    }
+    recall(entries[historyIndex.current]!);
+  }
+
+  /** Down on the input's last line: a later prompt, then back to the draft. */
+  function historyDown() {
+    const entries = promptHistory.current;
+    if (historyIndex.current === null) return;
+    if (historyIndex.current < entries.length - 1) {
+      historyIndex.current++;
+      recall(entries[historyIndex.current]!);
+    } else {
+      historyIndex.current = null;
+      recall(draft.current);
+    }
+  }
 
   // --- Chatting ---------------------------------------------------------------
 
@@ -802,6 +811,8 @@ export default function App({ config, providerName, modelOverride, version, clea
               })}
               transformPaste={pastedPathsToMentions}
               onPasteRequest={pasteFromClipboard}
+              onHistoryUp={historyUp}
+              onHistoryDown={historyDown}
             />
           </Box>
         );
