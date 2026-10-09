@@ -1,5 +1,4 @@
 import { Box, Static, Text, useApp, useInput } from 'ink';
-import TextInput from 'ink-text-input';
 import { useEffect, useRef, useState } from 'react';
 import {
   CONFIG_PATH,
@@ -13,6 +12,8 @@ import { getModelInfo, listModels, STANDARD_EFFORT_LEVELS, streamChat } from '..
 import { costOf } from '../core/pricing.js';
 import type { ChatMessage, EffortParam, Endpoint, ModelInfo, RateLimit, Usage } from '../core/types.js';
 import AddProvider, { type AddedProvider } from './AddProvider.js';
+import { ChatInput } from './ChatInput.js';
+import { completionFor } from './completion.js';
 import { SelectList } from './components.js';
 import { isRenderer, RENDERER_DESCRIPTIONS, type Renderer, RENDERERS, renderMarkdown } from './markdown/index.js';
 import { pickVerb, Spinner } from './Spinner.js';
@@ -54,7 +55,7 @@ const HELP = `Commands:
   /help              show this help
   /quit              exit (or Ctrl+C)
 Model, effort, system prompt and renderer changes last for this session only.
-Up/Down recall earlier prompts. Press Esc while a reply is streaming to stop it.
+Tab completes commands. Up/Down recall earlier prompts. Press Esc while a reply is streaming to stop it.
 Nothing is saved: the conversation disappears when you quit.`;
 
 function errorMessage(error: unknown): string {
@@ -150,8 +151,8 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
   const promptHistory = useRef<string[]>([]);
   const historyIndex = useRef<number | null>(null); // null = editing the unsent draft
   const draft = useRef('');
-  // Remounting the input puts its cursor at the end of a recalled prompt.
-  const [inputKey, setInputKey] = useState(0);
+  // Model IDs per provider once /model has listed them, for completing /model <name>.
+  const modelIds = useRef(new Map<string, string[]>());
 
   const add = (kind: EntryKind, text: string) =>
     setEntries((current) => [...current, { id: nextId.current++, kind, text, renderer }]);
@@ -211,7 +212,6 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
 
   function recall(text: string) {
     setInput(text);
-    setInputKey((k) => k + 1);
   }
 
   useInput((_input, key) => {
@@ -388,6 +388,7 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
     setActivity({ label: 'Loading models', startedAt: Date.now() });
     try {
       const ids = await listModels(await endpointFor(provider));
+      modelIds.current.set(provider.name, ids);
       if (ids.length) setMode({ type: 'models', ids });
       else add('info', 'This provider didn’t report any models. Use /model <name>.');
     } catch (error) {
@@ -660,12 +661,17 @@ export default function App({ config, providerName, modelOverride, clearFrame }:
             <Text color="cyan" bold>
               {PROMPT}
             </Text>
-            <TextInput
-              key={inputKey}
+            <ChatInput
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
               placeholder="Message, or /help"
+              completion={completionFor(input, {
+                providers: providers.map((p) => p.name),
+                renderers: RENDERERS,
+                effortLevels: (loaded && modelInfo?.effort?.levels) || STANDARD_EFFORT_LEVELS,
+                models: (provider && modelIds.current.get(provider.name)) ?? [],
+              })}
             />
           </Box>
         );
