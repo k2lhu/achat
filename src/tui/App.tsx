@@ -47,7 +47,7 @@ const HELP = `Commands:
   /help              show this help
   /quit              exit (or Ctrl+C)
 Model, system prompt and renderer changes last for this session only.
-Press Esc while a reply is streaming to stop it.
+Up/Down recall earlier prompts. Press Esc while a reply is streaming to stop it.
 Nothing is saved: the conversation disappears when you quit.`;
 
 function errorMessage(error: unknown): string {
@@ -90,6 +90,13 @@ export default function App({ config, providerName, modelOverride }: Props) {
   const abortRef = useRef<AbortController | null>(null);
   const keyCache = useRef(new Map<string, string | undefined>());
 
+  // Sent prompts for Up/Down recall. In memory only, like the conversation.
+  const promptHistory = useRef<string[]>([]);
+  const historyIndex = useRef<number | null>(null); // null = editing the unsent draft
+  const draft = useRef('');
+  // Remounting the input puts its cursor at the end of a recalled prompt.
+  const [inputKey, setInputKey] = useState(0);
+
   const add = (kind: EntryKind, text: string) =>
     setEntries((current) => [...current, { id: nextId.current++, kind, text, renderer }]);
 
@@ -108,8 +115,35 @@ export default function App({ config, providerName, modelOverride }: Props) {
     setSystemPrompt(next.systemPrompt);
   }
 
+  function recall(text: string) {
+    setInput(text);
+    setInputKey((k) => k + 1);
+  }
+
   useInput((_input, key) => {
     if (key.escape) abortRef.current?.abort();
+    if (mode.type !== 'chat' || busy) return;
+
+    const entries = promptHistory.current;
+    if (key.upArrow && entries.length) {
+      if (historyIndex.current === null) {
+        draft.current = input;
+        historyIndex.current = entries.length - 1;
+      } else if (historyIndex.current > 0) {
+        historyIndex.current--;
+      } else {
+        return;
+      }
+      recall(entries[historyIndex.current]!);
+    } else if (key.downArrow && historyIndex.current !== null) {
+      if (historyIndex.current < entries.length - 1) {
+        historyIndex.current++;
+        recall(entries[historyIndex.current]!);
+      } else {
+        historyIndex.current = null;
+        recall(draft.current);
+      }
+    }
   });
 
   // --- Chatting ---------------------------------------------------------------
@@ -323,6 +357,9 @@ export default function App({ config, providerName, modelOverride }: Props) {
     const text = value.trim();
     if (!text || busy) return;
     setInput('');
+    if (promptHistory.current.at(-1) !== text) promptHistory.current.push(text);
+    historyIndex.current = null;
+    draft.current = '';
     if (text.startsWith('/')) void runCommand(text);
     else void send(text);
   }
@@ -448,6 +485,7 @@ export default function App({ config, providerName, modelOverride }: Props) {
               {'› '}
             </Text>
             <TextInput
+              key={inputKey}
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
