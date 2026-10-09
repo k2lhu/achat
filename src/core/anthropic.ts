@@ -1,6 +1,7 @@
 // Anthropic Messages API backend, via the official SDK.
 
 import Anthropic from '@anthropic-ai/sdk';
+import { imagesOf, pdfsOf, textWithFiles } from './attachments.js';
 import { ApiError } from './errors.js';
 import { anthropicPrice } from './pricing.js';
 import { parseRateLimit } from './ratelimit.js';
@@ -40,6 +41,29 @@ function toApiError(error: unknown): unknown {
   return error;
 }
 
+type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
+/** Plain text, or PDFs (natively) and images followed by the text. */
+function toContent(message: ChatMessage): string | Anthropic.ContentBlockParam[] {
+  if (!message.attachments?.length) return message.content;
+  return [
+    ...pdfsOf(message).map(
+      (pdf): Anthropic.ContentBlockParam => ({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: pdf.data },
+        title: pdf.name,
+      }),
+    ),
+    ...imagesOf(message).map(
+      (image): Anthropic.ContentBlockParam => ({
+        type: 'image',
+        source: { type: 'base64', media_type: image.mediaType as ImageMediaType, data: image.data },
+      }),
+    ),
+    { type: 'text', text: textWithFiles(message, true) },
+  ];
+}
+
 export async function* streamAnthropic(
   endpoint: Endpoint,
   model: string,
@@ -53,7 +77,7 @@ export async function* streamAnthropic(
     .join('\n\n');
   const turns = messages
     .filter((m) => m.role !== 'system')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: toContent(m) }));
 
   const params = {
     model,
@@ -141,6 +165,7 @@ export async function getAnthropicModelInfo(
       contextWindow: info.max_input_tokens ?? undefined,
       price: anthropicPrice(model),
       effort,
+      vision: info.capabilities?.image_input.supported,
       rateLimit: parseRateLimit(response.headers),
     };
   } catch (error) {

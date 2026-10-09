@@ -9,9 +9,28 @@ import {
   resolveApiKey,
 } from '../config.js';
 import { getAccount, getModelInfo, listModels, STANDARD_EFFORT_LEVELS, streamChat } from '../core/client.js';
+import { formatBytes } from '../core/attachments.js';
 import { costOf } from '../core/pricing.js';
 import { mergeRateLimit } from '../core/ratelimit.js';
-import type { Balance, ChatMessage, EffortParam, Endpoint, ModelInfo, RateLimit, Usage } from '../core/types.js';
+import type {
+  Attachment,
+  Balance,
+  ChatMessage,
+  EffortParam,
+  Endpoint,
+  ModelInfo,
+  RateLimit,
+  Usage,
+} from '../core/types.js';
+import {
+  completePath,
+  escapePath,
+  findMentions,
+  imageAttachment,
+  pastedPathsToMentions,
+  readAttachment,
+  readClipboard,
+} from '../files.js';
 import AddProvider, { type AddedProvider } from './AddProvider.js';
 import { ChatInput } from './ChatInput.js';
 import { completionFor } from './completion.js';
@@ -35,6 +54,8 @@ interface Entry {
   /** For the welcome box: what it was connected to when shown. */
   provider?: string;
   model?: string;
+  /** For user messages: the attached files, e.g. "📎 plan.md · 2 KB". */
+  files?: string;
 }
 
 type Mode =
@@ -61,6 +82,8 @@ const HELP = `Commands:
   /help              show this help
   /quit              exit (or Ctrl+C)
 Model, effort, system prompt and renderer changes last for this session only.
+Attach files with @path (Tab completes), by dragging them onto the window, or paste
+an image or a copied file with Ctrl+V. Text, code, images and PDFs are supported.
 Tab completes commands. Up/Down recall earlier prompts. Press Esc while a reply is streaming to stop it.
 Nothing is saved: the conversation disappears when you quit.`;
 
@@ -167,8 +190,38 @@ export default function App({ config, providerName, modelOverride, version, clea
   // Model IDs per provider once /model has listed them, for completing /model <name>.
   const modelIds = useRef(new Map<string, string[]>());
 
-  const add = (kind: EntryKind, text: string) =>
-    setEntries((current) => [...current, { id: nextId.current++, kind, text, renderer }]);
+  const add = (kind: EntryKind, text: string, extra: Partial<Entry> = {}) =>
+    setEntries((current) => [...current, { id: nextId.current++, kind, text, renderer, ...extra }]);
+
+  // Images pasted with Ctrl+V, referred to as [image #N] in the input. Memory only.
+  const pastedImages = useRef(new Map<number, Attachment>());
+  const nextImage = useRef(1);
+
+  async function pasteFromClipboard(): Promise<string | undefined> {
+    const content = await readClipboard();
+    if (!content) {
+      add('info', 'Nothing to paste: copy an image (e.g. a screenshot) or a file in Finder first.');
+      return undefined;
+    }
+    if (content.kind === 'file') return `@${escapePath(content.path)} `;
+    const number = nextImage.current++;
+    try {
+      pastedImages.current.set(number, imageAttachment(`image #${number}`, content.data));
+    } catch (error) {
+      add('error', errorMessage(error));
+      return undefined;
+    }
+    return `[image #${number}] `;
+  }
+
+  /** Files mentioned with @path and images pasted as [image #N]. Throws if a file can't be read. */
+  async function attachmentsFor(text: string): Promise<Attachment[]> {
+    const files = await Promise.all(findMentions(text).map(readAttachment));
+    const images = [...text.matchAll(/\[image #(\d+)\]/g)]
+      .map((match) => pastedImages.current.get(Number(match[1])))
+      .filter((image): image is Attachment => image !== undefined);
+    return [...files, ...images];
+  }
 
   const backToChat = () => setMode({ type: 'chat' });
 
@@ -273,12 +326,35 @@ export default function App({ config, providerName, modelOverride, version, clea
 
   async function send(text: string) {
     if (!provider) return;
-    const conversation: ChatMessage[] = [...history, { role: 'user', content: text }];
+
+    let attachments: Attachment[] = [];
+    if (findMentions(text).length) setActivity({ label: 'Reading files', startedAt: Date.now() });
+    try {
+      attachments = await attachmentsFor(text);
+    } catch (error) {
+      setActivity(null);
+      add('error', errorMessage(error));
+      setInput(text); // Keep what was typed so the path can be fixed.
+      return;
+    }
+    if (attachments.some((a) => a.kind === 'image') && modelInfo?.vision === false) {
+      setActivity(null);
+      add('error', `${model} can’t see images. Pick a vision model with /model, or remove the image.`);
+      setInput(text);
+      return;
+    }
+
+    const userMessage: ChatMessage = { role: 'user', content: text };
+    if (attachments.length) userMessage.attachments = attachments;
+    const conversation: ChatMessage[] = [...history, userMessage];
     const messages: ChatMessage[] = systemPrompt
       ? [{ role: 'system', content: systemPrompt }, ...conversation]
       : conversation;
 
-    add('user', text);
+    const files = attachments
+      .map((a) => `${a.kind === 'image' ? '🖼' : '📎'} ${a.name} · ${formatBytes(a.size)}`)
+      .join('   ');
+    add('user', text, files ? { files } : {});
     setActivity({ label: pickVerb(), startedAt: Date.now() });
     setStreaming('');
 
@@ -708,7 +784,10 @@ export default function App({ config, providerName, modelOverride, version, clea
                 renderers: RENDERERS,
                 effortLevels: (loaded && modelInfo?.effort?.levels) || STANDARD_EFFORT_LEVELS,
                 models: (provider && modelIds.current.get(provider.name)) ?? [],
+                completePath,
               })}
+              transformPaste={pastedPathsToMentions}
+              onPasteRequest={pasteFromClipboard}
             />
           </Box>
         );
@@ -765,12 +844,15 @@ function EntryView({ entry, width, version }: { entry: Entry; width: number; ver
       return <Welcome version={version} provider={entry.provider} model={entry.model} width={width} />;
     case 'user':
       return (
-        <Text>
-          <Text color="cyan" bold>
-            {PROMPT}
+        <Box flexDirection="column">
+          <Text>
+            <Text color="cyan" bold>
+              {PROMPT}
+            </Text>
+            {entry.text}
           </Text>
-          {entry.text}
-        </Text>
+          {entry.files && <Text dimColor>{'  ' + entry.files}</Text>}
+        </Box>
       );
     case 'assistant':
       return <Text>{renderMarkdown(entry.text, width, entry.renderer)}</Text>;

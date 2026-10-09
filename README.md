@@ -38,6 +38,21 @@ support say so; where the API doesn't report support (e.g. OpenAI, local servers
 still set a level, but it may be rejected. The choice lasts for the session and shows in the
 status bar.
 
+### Files
+
+Attach files to a message in any of three ways:
+
+- **`@path`** anywhere in the message, e.g. `summarise @~/notes/plan.md`. Tab completes file
+  and folder names; spaces in paths are written as `\ `.
+- **Drag a file** from Finder onto the terminal window; its path becomes an `@` mention.
+- **Ctrl+V** pastes a copied image (such as a screenshot) as `[image #1]`, or a file copied in
+  Finder as an `@` mention.
+
+Text and code files are included in the message as text. Images go to vision models (achat
+checks first, where the provider reports it). PDFs are sent natively to Anthropic and as
+extracted text to other providers. Files are read into memory only and sent with the
+conversation, so they're re-sent with every following message and count towards the context.
+
 Replies are rendered as markdown. `/renderer` switches between `new` (achat's own layout)
 and `classic` (the original marked-terminal look); set `renderer = "classic"` at the top of
 the config to make it the default.

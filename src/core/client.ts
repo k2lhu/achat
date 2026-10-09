@@ -3,6 +3,7 @@
 // Either way it runs unchanged in Node, browsers, Electron and Tauri.
 
 import { getAnthropicModelInfo, listAnthropicModels, streamAnthropic } from './anthropic.js';
+import { toOpenAIMessage } from './attachments.js';
 import { ApiError } from './errors.js';
 import { parseRateLimit } from './ratelimit.js';
 import { getVeniceAccount } from './venice.js';
@@ -106,7 +107,7 @@ async function* streamOpenAI(
       headers: headers(endpoint),
       body: JSON.stringify({
         model,
-        messages,
+        messages: messages.map(toOpenAIMessage),
         stream: true,
         ...effortField,
         ...(withUsage ? { stream_options: { include_usage: true } } : {}),
@@ -241,10 +242,19 @@ function effortFromListing(entry: ModelListing): EffortSupport | null | undefine
   return undefined;
 }
 
+function visionFromListing(entry: ModelListing): boolean | undefined {
+  const venice = field(entry, 'model_spec.capabilities.supportsVision');
+  if (typeof venice === 'boolean') return venice;
+  const modalities = field(entry, 'architecture.input_modalities'); // OpenRouter
+  if (Array.isArray(modalities)) return modalities.includes('image');
+  return undefined;
+}
+
 function modelInfoFromListing(entry: ModelListing): ModelInfo {
   const info: ModelInfo = {
     contextWindow: firstNumber(entry, CONTEXT_FIELDS),
     effort: effortFromListing(entry),
+    vision: visionFromListing(entry),
   };
 
   // Venice: USD per million tokens.

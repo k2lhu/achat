@@ -9,6 +9,8 @@ export interface CompletionSources {
   effortLevels: string[];
   /** Model IDs, when the list has been fetched this session. */
   models: string[];
+  /** Rest of a file or folder name for an @path mention. */
+  completePath: (partial: string) => string | undefined;
 }
 
 function argumentsFor(command: string, sources: CompletionSources): string[] {
@@ -39,6 +41,10 @@ function extend(typed: string, options: string[]): string | undefined {
  * undefined when there's nothing to suggest.
  */
 export function completionFor(input: string, sources: CompletionSources): string | undefined {
+  // An @path being typed as the last word (spaces inside paths are escaped as "\ ").
+  const lastWord = input.match(/(?:^|\s)@((?:\\.|[^\s\\])*)$/);
+  if (lastWord) return sources.completePath(lastWord[1]!);
+
   if (!input.startsWith('/')) return undefined;
 
   const words = input.slice(1).split(' ');

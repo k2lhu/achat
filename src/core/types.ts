@@ -2,9 +2,17 @@
 
 export type Role = 'system' | 'user' | 'assistant';
 
+/** A file sent along with a message. Binary data is base64. */
+export type Attachment =
+  | { kind: 'text'; name: string; size: number; text: string }
+  | { kind: 'image'; name: string; size: number; mediaType: string; data: string }
+  /** `text` is extracted locally, for providers that can't read PDFs natively. */
+  | { kind: 'pdf'; name: string; size: number; data: string; text: string };
+
 export interface ChatMessage {
   role: Role;
   content: string;
+  attachments?: Attachment[];
 }
 
 /** Which API an endpoint speaks. Venice is OpenAI-compatible plus account balance. */
@@ -83,6 +91,8 @@ export interface ModelInfo {
   price?: Price;
   /** null: the model doesn't support effort. undefined: the API doesn't say. */
   effort?: EffortSupport | null;
+  /** Whether the model accepts images; undefined when the API doesn't say. */
+  vision?: boolean;
   /** From the headers of the request that fetched this info. */
   rateLimit?: RateLimit;
 }
