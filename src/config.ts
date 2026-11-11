@@ -1,22 +1,16 @@
-// Reads and writes ~/.config/achat/config.toml and stores API keys in the
-// macOS Keychain (Node/macOS specific).
+// Reads and writes ~/.config/achat/config.toml and resolves API key references.
+// Keys themselves live in the OS keyring (see keystore.ts) or in env variables.
 
-import { execFile, spawn } from 'node:child_process';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import { parse, stringify } from 'smol-toml';
-import type { ApiKind, Price } from './core/types.js';
+import { API_KINDS, type ApiKind, isApiKind, type Price } from './core/types.js';
+import { KEY_SERVICE, keyEnvVar, keyStore, KeyStoreError } from './keystore.js';
 import { isRenderer, type Renderer, RENDERERS } from './tui/markdown/index.js';
-
-const run = promisify(execFile);
 
 export const CONFIG_PATH =
   process.env.ACHAT_CONFIG ?? path.join(homedir(), '.config', 'achat', 'config.toml');
-
-/** Keychain service name used for `keychain:<name>` keys. */
-export const KEYCHAIN_SERVICE = 'achat';
 
 export const PROVIDER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
@@ -59,8 +53,10 @@ function toProvider(name: string, raw: unknown): Provider {
   const kind = optionalString(raw.type, `providers.${name}.type`) ?? 'openai';
   if (!baseUrl) throw new ConfigError(`[providers.${name}] is missing base_url`);
   if (!model) throw new ConfigError(`[providers.${name}] is missing model`);
-  if (kind !== 'openai' && kind !== 'anthropic' && kind !== 'venice' && kind !== 'featherless') {
-    throw new ConfigError(`[providers.${name}] type must be "openai", "anthropic", "venice" or "featherless"`);
+  if (!isApiKind(kind)) {
+    throw new ConfigError(
+      `[providers.${name}] type must be one of: ${API_KINDS.map((k) => `"${k}"`).join(', ')}`,
+    );
   }
   return {
     name,
@@ -156,7 +152,7 @@ export async function saveProvider(provider: Provider, makeDefault: boolean): Pr
   if (provider.apiKeyRef) table.api_key = provider.apiKeyRef;
   if (provider.systemPrompt) table.system_prompt = provider.systemPrompt;
 
-  let text = (await readConfigText()) ?? '# achat config. See config.example.toml for all options.\n';
+  let text = (await readConfigText()) ?? '# achat config. All options: https://github.com/k2lhu/achat/blob/main/config.example.toml\n';
   if (!text.endsWith('\n')) text += '\n';
   text += '\n' + stringify({ providers: { [provider.name]: table } }) + '\n';
   if (makeDefault) text = setDefaultLine(text, provider.name);
@@ -205,51 +201,50 @@ export async function resolveApiKey(ref: string | undefined): Promise<string | u
 
   if (ref.startsWith('keychain:')) {
     const account = ref.slice(9);
-    try {
-      const { stdout } = await run('security', [
-        'find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', account, '-w',
-      ]);
-      return stdout.trim();
-    } catch {
+    const store = await keyStore();
+    if (!store) {
       throw new ConfigError(
-        `No Keychain item for service "${KEYCHAIN_SERVICE}", account "${account}". ` +
-          'Re-add the provider with /provider, or run:\n' +
-          `  security add-generic-password -s ${KEYCHAIN_SERVICE} -a ${account} -w`,
+        `api_key = "${ref}" needs an OS keyring, and none is available here` +
+          (process.platform === 'linux' ? ' (needs secret-tool and a D-Bus session)' : '') +
+          `.\nPut the key in an environment variable instead and set api_key = "env:${keyEnvVar(account)}" in ${CONFIG_PATH}`,
       );
     }
+    let key: string | undefined;
+    try {
+      key = await store.get(account);
+    } catch (error) {
+      throw new ConfigError((error as Error).message);
+    }
+    if (!key) {
+      throw new ConfigError(
+        `No key in the ${store.label} for service "${KEY_SERVICE}", account "${account}". ` +
+          'Remove and re-add the provider with /provider to save it again.',
+      );
+    }
+    return key;
   }
 
   return ref;
 }
 
-/**
- * Saves a key to the login Keychain, replacing any existing one. The key is
- * passed on stdin (`security -i`) so it never appears in the process list.
- */
+/** Saves a key to the OS keyring under `keychain:<account>`, replacing any old one. */
 export async function storeApiKey(account: string, key: string): Promise<void> {
-  if (/\s/.test(key)) throw new ConfigError('API key must not contain spaces or line breaks');
-  const quote = (value: string) => `"${value.replace(/[\\"]/g, '\\$&')}"`;
-  const command =
-    `add-generic-password -U -s ${quote(KEYCHAIN_SERVICE)} -a ${quote(account)} -w ${quote(key)}\n`;
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('security', ['-i'], { stdio: ['pipe', 'ignore', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (chunk) => (stderr += chunk));
-    child.on('error', reject);
-    child.on('close', (code) =>
-      code === 0 && !stderr.trim()
-        ? resolve()
-        : reject(new ConfigError(`Could not save the key to Keychain: ${stderr.trim() || code}`)),
-    );
-    child.stdin.end(command);
-  });
+  const store = await keyStore();
+  if (!store) throw new ConfigError('No OS keyring is available');
+  try {
+    await store.set(account, key);
+  } catch (error) {
+    throw error instanceof KeyStoreError ? new ConfigError(error.message) : error;
+  }
 }
 
+/** Deletes a `keychain:<account>` key. Does nothing when there is no keyring. */
 export async function deleteApiKey(account: string): Promise<void> {
+  const store = await keyStore();
+  if (!store) return;
   try {
-    await run('security', ['delete-generic-password', '-s', KEYCHAIN_SERVICE, '-a', account]);
-  } catch {
-    // Already gone.
+    await store.delete(account);
+  } catch (error) {
+    throw error instanceof KeyStoreError ? new ConfigError(error.message) : error;
   }
 }

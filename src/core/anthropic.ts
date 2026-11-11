@@ -29,6 +29,17 @@ function client(endpoint: Endpoint): Anthropic {
     baseURL: endpoint.baseUrl,
     // The same core runs in a browser-based frontend; keys stay on the user's device.
     dangerouslyAllowBrowser: true,
+    // The SDK reports the OS, CPU, runtime and SDK version by default. Send none
+    // of that; `null` removes a header.
+    defaultHeaders: {
+      'User-Agent': 'achat',
+      'X-Stainless-Lang': null,
+      'X-Stainless-Package-Version': null,
+      'X-Stainless-OS': null,
+      'X-Stainless-Arch': null,
+      'X-Stainless-Runtime': null,
+      'X-Stainless-Runtime-Version': null,
+    },
   });
 }
 

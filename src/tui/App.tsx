@@ -87,11 +87,11 @@ const HELP = `Commands:
   /help              show this help
   /quit              exit (or Ctrl+C)
 Model, effort, system prompt and renderer changes last for this session only.
-Attach files with @path (Tab completes), by dragging them onto the window, or paste
-an image or a copied file with Ctrl+V. Text, code, images and PDFs are supported.
-Editing: Option+←/→ jump by word, Home/End or Ctrl+A/E jump to the start/end of the line
+Attach files with @path (Tab completes), by dragging them onto the window, or (on macOS)
+paste an image or a copied file with Ctrl+V. Text, code, images and PDFs are supported.
+Editing: Option/Alt+←/→ jump by word, Home/End or Ctrl+A/E jump to the start/end of the line
 (again for the whole message). New line: Shift+Enter (if your terminal supports it),
-Option+Enter, or \ then Enter. Tab completes commands. Up/Down move between lines and
+Option/Alt+Enter, or \ then Enter. Tab completes commands. Up/Down move between lines and
 recall earlier prompts. Press Esc while a reply is streaming to stop it.
 Nothing is saved: the conversation disappears when you quit.`;
 
@@ -215,7 +215,12 @@ export default function App({ config, providerName, modelOverride, version, clea
   async function pasteFromClipboard(): Promise<string | undefined> {
     const content = await readClipboard();
     if (!content) {
-      add('info', 'Nothing to paste: copy an image (e.g. a screenshot) or a file in Finder first.');
+      add(
+        'info',
+        process.platform === 'darwin'
+          ? 'Nothing to paste: copy an image (e.g. a screenshot) or a file in Finder first.'
+          : 'Pasting images and files with Ctrl+V works on macOS only for now. Use @path to attach a file.',
+      );
       return undefined;
     }
     if (content.kind === 'file') return `@${escapePath(content.path)} `;
@@ -447,7 +452,7 @@ export default function App({ config, providerName, modelOverride, version, clea
 
   // --- Providers --------------------------------------------------------------
 
-  function handleAdded({ provider: added, apiKey, makeDefault }: AddedProvider) {
+  function handleAdded({ provider: added, apiKey, makeDefault, keyNote }: AddedProvider) {
     setProviders((current) => [...current, added]);
     if (makeDefault) setDefaultName(added.name);
     keyCache.current.set(added.name, apiKey);
@@ -456,7 +461,7 @@ export default function App({ config, providerName, modelOverride, version, clea
     add(
       'info',
       `Saved "${added.name}" to ${CONFIG_PATH}` +
-        (apiKey ? ' and its API key to your Keychain.' : '.') +
+        (keyNote ? ` and ${keyNote}` : '.') +
         (makeDefault ? ' It is now the default.' : '') +
         `\nNow chatting with ${added.name} · ${added.model}`,
     );

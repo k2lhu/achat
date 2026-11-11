@@ -6,11 +6,14 @@
 # concurrency units).
 #
 # api_key can be:
-#   "keychain:NAME"  read from macOS Keychain (recommended). Add a key with:
-#                    security add-generic-password -s achat -a NAME -w
-#                    (you'll be prompted for the key, so it never lands in shell history)
-#   "env:VAR"        read from an environment variable
+#   "keychain:NAME"  read from your OS keyring (recommended): the macOS Keychain, or on Linux
+#                    the Secret Service keyring via secret-tool. Add a key by hand with:
+#                      macOS: security add-generic-password -s achat -a NAME -w
+#                      Linux: secret-tool store --label="achat: NAME" service achat account NAME
+#                    (you're prompted for the key, so it never lands in shell history)
+#   "env:VAR"        read from an environment variable, e.g. "env:ACHAT_OPENAI_API_KEY"
 #   omitted          no auth, for local servers
+#   anything else    the key itself, in plain text (works, but not recommended)
 #
 # Model names change often: run /models inside achat to see what a provider offers.
 

@@ -1,0 +1,31 @@
+name: Provider report
+description: Tell us a provider works (or doesn't) with achat
+labels: [provider]
+body:
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and base URL
+      placeholder: e.g. Groq, https://api.groq.com/openai/v1
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Partly works
+        - Doesn't work
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Model used, what worked, what didn't (model list, streaming, effort, images, PDFs, status bar).
+  - type: textarea
+    id: version
+    attributes:
+      label: Output of `achat --version`
+      render: text

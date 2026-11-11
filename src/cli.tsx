@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { CONFIG_PATH, ConfigError, loadConfig } from './config.js';
 import App from './tui/App.js';
+import { keyStore } from './keystore.js';
 import { clearTerminal } from './tui/terminal.js';
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -13,6 +14,7 @@ const USAGE = `Usage: achat [options]
 Options:
   -p, --provider <name>  provider from the config (default: "default" in config)
   -m, --model <name>     model to use (default: the provider's model)
+  -v, --version          show the version and system details
   -h, --help             show this help
 
 Config: ${CONFIG_PATH}`;
@@ -23,8 +25,18 @@ async function main() {
       provider: { type: 'string', short: 'p' },
       model: { type: 'string', short: 'm' },
       help: { type: 'boolean', short: 'h' },
+      version: { type: 'boolean', short: 'v' },
     },
   });
+
+  if (values.version) {
+    // The details help with bug reports; none of this is sent anywhere.
+    const store = await keyStore();
+    console.log(`achat ${version}`);
+    console.log(`node ${process.version}, ${process.platform} ${process.arch}`);
+    console.log(`keys: ${store?.label ?? 'no OS keyring, use env: keys'}`);
+    return;
+  }
 
   if (values.help) {
     console.log(USAGE);
