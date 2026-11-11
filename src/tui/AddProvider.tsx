@@ -12,6 +12,7 @@ import { listModels, OPENAI_BASE_URL } from '../core/client.js';
 import { FEATHERLESS_BASE_URL } from '../core/featherless.js';
 import { VENICE_BASE_URL } from '../core/venice.js';
 import type { ApiKind } from '../core/types.js';
+import { keyEnvVar, type KeyStore, keyStore } from '../keystore.js';
 import { type Choice, Prompt, SelectList } from './components.js';
 import { Spinner } from './Spinner.js';
 
@@ -44,7 +45,7 @@ const MAIN_PRESETS: Preset[] = [
   },
   {
     label: 'Venice',
-    hint: 'private, shows your balance',
+    hint: 'shows your balance',
     kind: 'venice',
     name: 'venice',
     baseUrl: VENICE_BASE_URL,
@@ -86,6 +87,8 @@ export interface AddedProvider {
   provider: Provider;
   apiKey?: string;
   makeDefault: boolean;
+  /** Where the key went, for the confirmation message; undefined when there is no key. */
+  keyNote?: string;
 }
 
 interface Props {
@@ -122,6 +125,12 @@ export default function AddProvider({ existingNames, onDone, onCancel }: Props) 
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
   const [problem, setProblem] = useState('');
+  // undefined = still checking, null = no keyring on this machine.
+  const [store, setStore] = useState<KeyStore | null | undefined>(undefined);
+
+  useEffect(() => {
+    keyStore().then((s) => setStore(s ?? null), () => setStore(null));
+  }, []);
 
   const isFirst = existingNames.length === 0;
 
@@ -157,18 +166,36 @@ export default function AddProvider({ existingNames, onDone, onCancel }: Props) 
 
   function save(chosenModel: string, makeDefault: boolean) {
     setStep('saving');
-    const provider: Provider = {
-      name,
-      kind: preset.kind,
-      baseUrl,
-      model: chosenModel,
-      apiKeyRef: apiKey ? `keychain:${name}` : undefined,
-    };
-    (async () => {
-      if (apiKey) await storeApiKey(name, apiKey);
+    (async (): Promise<AddedProvider> => {
+      let apiKeyRef: string | undefined;
+      let keyNote: string | undefined;
+      if (apiKey) {
+        let storeProblem = store ? '' : 'No OS keyring is available here.';
+        if (store) {
+          try {
+            await storeApiKey(name, apiKey);
+            apiKeyRef = `keychain:${name}`;
+            keyNote = `its API key to your ${store.label}.`;
+          } catch (error) {
+            storeProblem = `${(error as Error).message}.`;
+          }
+        }
+        if (!apiKeyRef) {
+          // No working keyring: the config points at an environment variable and the
+          // key is used from memory for this session only.
+          const variable = keyEnvVar(name);
+          apiKeyRef = `env:${variable}`;
+          keyNote =
+            `a reference to the environment variable ${variable}. ${storeProblem} ` +
+            'The key works for this session only. To keep it, add this line with your key ' +
+            `to your shell profile (~/.bashrc, ~/.zshrc…):\n  export ${variable}='…'\n`;
+        }
+      }
+      const provider: Provider = { name, kind: preset.kind, baseUrl, model: chosenModel, apiKeyRef };
       await saveProvider(provider, makeDefault);
+      return { provider, apiKey: apiKey || undefined, makeDefault, keyNote };
     })()
-      .then(() => onDone({ provider, apiKey: apiKey || undefined, makeDefault }))
+      .then(onDone)
       .catch((error: Error) => {
         setProblem(`Could not save: ${error.message}`);
         setStep('checkFailed');
@@ -271,9 +298,12 @@ export default function AddProvider({ existingNames, onDone, onCancel }: Props) 
           secret
           label="API key"
           hint={
-            preset.keyRequired
-              ? 'Saved to your macOS Keychain, never to the config file.'
-              : 'Leave empty if this server doesn’t need one. Saved to your macOS Keychain.'
+            (preset.keyRequired ? '' : 'Leave empty if this server doesn’t need one. ') +
+            (store
+              ? `Saved to your ${store.label}, never to the config file.`
+              : store === null
+                ? `No OS keyring here: the config will point at the variable ${keyEnvVar(name)} instead.`
+                : '')
           }
           validate={(v) =>
             preset.keyRequired && !v

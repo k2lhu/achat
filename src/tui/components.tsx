@@ -45,8 +45,10 @@ export function SelectList<T>({
 
   useInput((input, key) => {
     if (key.escape) return onCancel();
-    if (key.upArrow) return setIndex(Math.max(0, current - 1));
-    if (key.downArrow) return setIndex(Math.min(visible.length - 1, current + 1));
+    // Update from the latest index, so presses that arrive before a re-render aren't lost.
+    const last = Math.max(0, visible.length - 1);
+    if (key.upArrow) return setIndex((i) => Math.max(0, Math.min(i, last) - 1));
+    if (key.downArrow) return setIndex((i) => Math.min(last, Math.min(i, last) + 1));
     if (key.return) {
       const choice = visible[current];
       if (choice) onSelect(choice.value);

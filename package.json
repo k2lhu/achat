@@ -1,28 +1,67 @@
 {
-  "name": "achat",
+  "name": "@k2lhu/achat",
   "version": "0.1.0",
-  "description": "Minimal, private terminal chat for OpenAI-compatible APIs",
+  "description": "Minimal, private terminal chat for Anthropic, Venice, Featherless and OpenAI-compatible APIs",
+  "keywords": [
+    "chat",
+    "cli",
+    "terminal",
+    "tui",
+    "llm",
+    "anthropic",
+    "claude",
+    "openai",
+    "ollama",
+    "openrouter",
+    "venice",
+    "featherless"
+  ],
+  "author": "k2lhu",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/k2lhu/achat#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/k2lhu/achat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/k2lhu/achat/issues"
+  },
   "type": "module",
   "bin": {
     "achat": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "config.example.toml",
+    "NOTICE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "dev": "tsx src/cli.tsx",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "prepack": "npm run clean && npm run build"
   },
   "engines": {
     "node": ">=22"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0",
+    "@anthropic-ai/sdk": "0.133.0",
     "chalk": "^6.0.1",
     "highlight.js": "^11.12.0",
-    "ink": "^8.0.0",
+    "ink": "8.0.0",
     "ink-text-input": "^6.0.0",
-    "marked": "^15.0.12",
-    "marked-terminal": "^7.3.0",
+    "marked": "15.0.12",
+    "marked-terminal": "7.3.0",
     "react": "^19.3.0",
     "smol-toml": "^1.9.1",
     "string-width": "^8.3.0",

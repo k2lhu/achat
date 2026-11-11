@@ -19,7 +19,12 @@ export interface ChatMessage {
  * Which API an endpoint speaks. Venice and Featherless are OpenAI-compatible,
  * with extra account details (balance; plan and concurrency).
  */
-export type ApiKind = 'openai' | 'anthropic' | 'venice' | 'featherless';
+export const API_KINDS = ['openai', 'anthropic', 'venice', 'featherless'] as const;
+export type ApiKind = (typeof API_KINDS)[number];
+
+export function isApiKind(value: string): value is ApiKind {
+  return (API_KINDS as readonly string[]).includes(value);
+}
 
 /** Where to send requests. `apiKey` is optional for local servers. */
 export interface Endpoint {
