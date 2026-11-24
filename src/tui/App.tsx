@@ -56,9 +56,8 @@ interface Entry {
   text: string;
   /** Renderer used for assistant replies, fixed when the entry is added. */
   renderer: Renderer;
-  /** For the welcome box: what it was connected to when shown. */
-  provider?: string;
-  model?: string;
+  /** For the welcome box: no provider was set up when it was shown. */
+  firstRun?: boolean;
   /** For user messages: the attached files, e.g. "📎 plan.md · 2 KB". */
   files?: string;
 }
@@ -137,8 +136,7 @@ export default function App({ config, providerName, modelOverride, version, clea
       kind: 'welcome',
       text: '',
       renderer: config.renderer,
-      provider: initialProvider?.name,
-      model: modelOverride ?? initialProvider?.model,
+      firstRun: !initialProvider,
     },
   ]);
   const [mode, setMode] = useState<Mode>(() =>
@@ -557,7 +555,7 @@ export default function App({ config, providerName, modelOverride, version, clea
         clearFrame();
         clearTerminal();
         setEntries([
-          { id: nextId.current++, kind: 'welcome', text: '', renderer, provider: provider?.name, model },
+          { id: nextId.current++, kind: 'welcome', text: '', renderer, firstRun: !provider },
         ]);
         setTranscriptKey((key) => key + 1);
         return;
@@ -804,6 +802,7 @@ export default function App({ config, providerName, modelOverride, version, clea
             </Text>
             <ChatInput
               value={input}
+              width={columns - PROMPT.length}
               onChange={setInput}
               onSubmit={handleSubmit}
               placeholder="Message, or /help"
@@ -910,7 +909,7 @@ function UserMessage({ text, files, columns }: { text: string; files?: string; c
 function EntryView({ entry, width, columns, version }: EntryViewProps) {
   switch (entry.kind) {
     case 'welcome':
-      return <Welcome version={version} provider={entry.provider} model={entry.model} width={width} />;
+      return <Welcome version={version} firstRun={entry.firstRun} width={width} />;
     case 'user':
       return <UserMessage text={entry.text} files={entry.files} columns={columns} />;
     case 'assistant':

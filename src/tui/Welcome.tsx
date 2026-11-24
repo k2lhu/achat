@@ -47,13 +47,13 @@ function Gradient({ text, bold }: { text: string; bold?: boolean }) {
 
 interface Props {
   version: string;
-  provider?: string;
-  model?: string;
+  /** No provider is set up yet. */
+  firstRun?: boolean;
   width: number;
 }
 
 /** Welcome box shown at start and after /clear. */
-export function Welcome({ version, provider, model, width }: Props) {
+export function Welcome({ version, firstRun, width }: Props) {
   const showSun = width >= 64;
 
   const details = (
@@ -63,15 +63,8 @@ export function Welcome({ version, provider, model, width }: Props) {
       ))}
       <Text color={CYAN}>v{version} · private terminal chat</Text>
       <Text> </Text>
-      {provider ? (
-        <Text>
-          <Text color={NEON_PINK}>{provider}</Text>
-          <Text dimColor> · </Text>
-          <Text color={CYAN}>{model}</Text>
-        </Text>
-      ) : (
-        <Text color={NEON_PINK}>Let’s add your first provider.</Text>
-      )}
+      {/* Provider and model live in the status bar: this box is printed once and never redrawn. */}
+      {firstRun && <Text color={NEON_PINK}>Let’s add your first provider.</Text>}
       <Text dimColor>nothing is saved · gone when you quit</Text>
     </Box>
   );

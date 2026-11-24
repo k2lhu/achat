@@ -39,7 +39,7 @@
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/cli.js",
     "typecheck": "tsc --noEmit",
     "start": "node dist/cli.js",
     "prepack": "npm run clean && npm run build"

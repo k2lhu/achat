@@ -11,6 +11,14 @@ slash-command names. The JavaScript modules are internal.
 
 ## [Unreleased]
 
+### Fixed
+
+- A long prompt no longer leaves copies of its first line on screen while typing and after
+  sending. The input now wraps its own rows, so a space at the wrap point (or the cursor) can't
+  spill past the edge of the terminal.
+- The welcome box no longer shows a provider and model that go stale after `/provider` or
+  `/model`. The status bar shows the current ones.
+
 ## [0.1.0] - 2026-11-11
 
 First public release.

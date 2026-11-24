@@ -1,8 +1,11 @@
 import { Box, Text, useInput } from 'ink';
-import { useRef, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
+import stringWidth from 'string-width';
 
 interface Props {
   value: string;
+  /** Columns available to the input; it wraps its own rows to this width. */
+  width: number;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
   placeholder?: string;
@@ -62,6 +65,7 @@ function lineEnd(chars: string[], at: number): number {
  */
 export function ChatInput({
   value,
+  width,
   onChange,
   onSubmit,
   placeholder = '',
@@ -184,6 +188,7 @@ export function ChatInput({
 
   const chars = [...state.current.value];
   const cursor = Math.min(state.current.cursor, chars.length);
+  const cols = Math.max(2, width);
 
   if (chars.length === 0) {
     return (
@@ -194,43 +199,90 @@ export function ChatInput({
     );
   }
 
-  // Draw line by line; the cursor (or the first ghost character at the very end) is inverted.
+  // Draw row by row; the cursor (or the first ghost character at the very end) is inverted.
+  // Rows are wrapped here rather than by Ink: Ink lets a space at a wrap point (such as
+  // the cursor block) spill one column past the edge, the terminal then wraps it onto a
+  // line Ink doesn't know about, and every redraw leaves a stale copy of the input behind.
   const lines: string[][] = [[]];
   for (const char of chars) {
     if (char === '\n') lines.push([]);
     else lines.at(-1)!.push(char);
   }
+  const rows: ReactNode[] = [];
   let offset = 0;
-  return (
-    <Box flexDirection="column">
-      {lines.map((line, i) => {
-        const start = offset;
-        offset += line.length + 1;
-        const hasCursor = cursor >= start && cursor <= start + line.length;
-        if (!hasCursor) return <Text key={i}>{line.join('') || ' '}</Text>;
+  for (const line of lines) {
+    const start = offset;
+    offset += line.length + 1;
+    const column = cursor >= start && cursor <= start + line.length ? cursor - start : -1;
+    const segments = wrapRow(line, cols);
+    const last = segments.at(-1)!;
+    // A cursor after a full last row needs a row of its own.
+    if (column === line.length && cellWidth(line.slice(last[0])) >= cols) segments.push([line.length, line.length]);
 
-        const column = cursor - start;
-        const before = line.slice(0, column).join('');
-        if (column < line.length) {
-          return (
-            <Text key={i}>
-              {before}
-              <Text inverse>{line[column]}</Text>
-              {line.slice(column + 1).join('')}
-            </Text>
-          );
-        }
-        const ghost = cursor === chars.length ? [...(completion ?? '')] : [];
-        return (
-          <Text key={i}>
-            {before}
+    segments.forEach(([from, to], n) => {
+      const key = `${start}:${from}:${n}`;
+      const isLast = n === segments.length - 1;
+      const here = column >= from && (column < to || (isLast && column === to)) ? column : -1;
+      if (here < 0) {
+        rows.push(<Text key={key}>{line.slice(from, to).join('') || ' '}</Text>);
+      } else if (here < to) {
+        rows.push(
+          <Text key={key}>
+            {line.slice(from, here).join('')}
+            <Text inverse>{line[here]}</Text>
+            {line.slice(here + 1, to).join('')}
+          </Text>,
+        );
+      } else {
+        const before = line.slice(from, to);
+        // Ghost text only at the very end, cut to fit the row.
+        const room = cols - cellWidth(before);
+        const ghost = cursor === chars.length ? fit([...(completion ?? '')], room) : [];
+        rows.push(
+          <Text key={key}>
+            {before.join('')}
             <Text inverse color={ghost.length ? 'gray' : undefined}>
               {ghost[0] ?? ' '}
             </Text>
             <Text color="gray">{ghost.slice(1).join('')}</Text>
-          </Text>
+          </Text>,
         );
-      })}
-    </Box>
-  );
+      }
+    });
+  }
+  return <Box flexDirection="column">{rows}</Box>;
+}
+
+const cellWidth = (chars: string[]) => chars.reduce((sum, char) => sum + stringWidth(char), 0);
+
+/** The longest start of `chars` that fits in `room` cells. */
+function fit(chars: string[], room: number): string[] {
+  let used = 0;
+  let n = 0;
+  while (n < chars.length && used + stringWidth(chars[n]!) <= room) used += stringWidth(chars[n++]!);
+  return chars.slice(0, n);
+}
+
+/**
+ * Splits a line into [from, to) rows at most `width` cells wide, breaking after a
+ * space where possible and mid-word only when a word is wider than the row.
+ */
+export function wrapRow(line: string[], width: number): [number, number][] {
+  const rows: [number, number][] = [];
+  let from = 0;
+  while (from < line.length) {
+    let to = from;
+    let used = 0;
+    while (to < line.length && used + stringWidth(line[to]!) <= width) used += stringWidth(line[to++]!);
+    if (to === from) to++; // A character wider than the row: show it anyway.
+    if (to < line.length) {
+      let space = to;
+      while (space > from && !isSpace(line[space - 1])) space--;
+      if (space > from) to = space;
+    }
+    rows.push([from, to]);
+    from = to;
+  }
+  if (rows.length === 0) rows.push([0, 0]);
+  return rows;
 }
