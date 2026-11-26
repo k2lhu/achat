@@ -1,7 +1,7 @@
-// Reading attachments from disk and the clipboard (Node/macOS specific).
-// Files are read into memory only; nothing is copied or cached on disk.
+// Reading attachments from disk and the clipboard, and copying to the clipboard
+// (Node specific). Files are read into memory only; nothing is copied or cached on disk.
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -36,7 +36,7 @@ export function escapePath(p: string): string {
   return p.replace(/([\\ ])/g, '\\$1');
 }
 
-function unescapePath(p: string): string {
+export function unescapePath(p: string): string {
   return p.replace(/\\(.)/g, '$1');
 }
 
@@ -180,4 +180,45 @@ export async function readClipboard(): Promise<ClipboardContent | undefined> {
     // No image on the clipboard.
   }
   return undefined;
+}
+
+/** How text was copied: by a clipboard tool, or by asking the terminal (OSC 52). */
+export type CopyMethod = 'system' | 'terminal';
+
+/** Runs `command` with `text` on stdin; resolves false if it's missing or fails. */
+function pipeTo(command: string, args: string[], text: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+    child.stdin.on('error', () => {});
+    child.stdin.end(text);
+  });
+}
+
+/** Clipboard tools to try, in order, for this system. */
+function clipboardTools(): [string, string[]][] {
+  if (process.platform === 'darwin') return [['pbcopy', []]];
+  const tools: [string, string[]][] = [];
+  if (process.env.WAYLAND_DISPLAY) tools.push(['wl-copy', []]);
+  if (process.env.DISPLAY) {
+    tools.push(['xclip', ['-selection', 'clipboard']], ['xsel', ['--clipboard', '--input']]);
+  }
+  return tools;
+}
+
+/**
+ * Copies `text` to the clipboard. Over SSH, or when no clipboard tool works,
+ * it asks the terminal to do it with an OSC 52 sequence, which most modern
+ * terminals support (not macOS Terminal.app). Nothing is written to disk.
+ */
+export async function writeClipboard(text: string): Promise<CopyMethod> {
+  const overSsh = Boolean(process.env.SSH_TTY || process.env.SSH_CONNECTION);
+  if (!overSsh) {
+    for (const [command, args] of clipboardTools()) {
+      if (await pipeTo(command, args, text)) return 'system';
+    }
+  }
+  process.stdout.write(`\x1b]52;c;${Buffer.from(text).toString('base64')}\x07`);
+  return 'terminal';
 }

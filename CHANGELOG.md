@@ -11,6 +11,16 @@ slash-command names. The JavaScript modules are internal.
 
 ## [Unreleased]
 
+### Added
+
+- `/export [path]` saves the conversation as a Markdown file, in the current folder by
+  default (`achat-YYYY-MM-DD-HHMM.md`). Replies are saved as the model's Markdown, each with
+  the model that wrote it; attachments are listed by name. Existing files are never
+  overwritten, and the file is readable only by you. Nothing is written unless you ask.
+- `/copy` copies the last reply as Markdown, `/copy all` the whole conversation. Uses
+  `pbcopy` on macOS and `wl-copy`, `xclip` or `xsel` on Linux. Over SSH, or without those
+  tools, it asks the terminal to copy with OSC 52.
+
 ### Fixed
 
 - A long prompt no longer leaves copies of its first line on screen while typing and after

@@ -1,7 +1,7 @@
 // Inline completion for slash commands and their arguments.
 
 /** Commands offered for completion, in priority order (aliases like /exit are left out). */
-const COMMANDS = ['help', 'provider', 'model', 'system', 'effort', 'renderer', 'clear', 'quit'];
+const COMMANDS = ['help', 'provider', 'model', 'system', 'effort', 'renderer', 'clear', 'export', 'copy', 'quit'];
 
 export interface CompletionSources {
   providers: string[];
@@ -25,6 +25,8 @@ function argumentsFor(command: string, sources: CompletionSources): string[] {
       return [...sources.renderers];
     case 'system':
       return ['off'];
+    case 'copy':
+      return ['all'];
     default:
       return [];
   }
@@ -51,6 +53,7 @@ export function completionFor(input: string, sources: CompletionSources): string
   if (words.length === 1) return words[0] ? extend(words[0], COMMANDS) : undefined;
 
   const [command = '', ...args] = words;
+  if (command === 'export') return sources.completePath(args.join(' '));
   if (command === 'provider' && args[0] === 'remove' && args.length === 2) {
     return extend(args[1]!, sources.providers);
   }

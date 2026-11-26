@@ -5,7 +5,7 @@ OpenAI-compatible API: OpenAI, OpenRouter, Groq, Ollama, LM Studio, Jan's local 
 others.
 
 - No telemetry, no logs, no chat history on disk. Conversations live in memory and are gone
-  when you quit.
+  when you quit, unless you save one with `/export`.
 - API keys go in your OS keyring or an environment variable, not in the config file.
 
 ```bash
@@ -38,7 +38,7 @@ achat --version            # version, Node, platform and key storage, for bug re
 ```
 
 Inside the chat, type `/help` for commands: `/provider`, `/model`, `/effort`, `/system`,
-`/renderer`, `/clear`, `/quit`. Press Esc to stop a reply mid-stream.
+`/renderer`, `/clear`, `/export`, `/copy`, `/quit`. Press Esc to stop a reply mid-stream.
 
 **Editing:** Option/Alt+←/→ jump by word; Home/End or Ctrl+A/E jump to the start/end of the
 line (press again for the whole message). For a new line use Shift+Enter (in terminals that
@@ -129,8 +129,9 @@ on Debian and Ubuntu, `libsecret` on Fedora and Arch) and a desktop session is r
 
 - achat sends no telemetry, checks for no updates, and contacts only the `base_url`s in your
   config.
-- The only file it writes is the config. Conversations, prompt history, pasted images and
-  keys read from the keyring stay in memory.
+- It writes only the config, and a Markdown file when you run `/export`. Conversations,
+  prompt history, pasted images and keys read from the keyring stay in memory.
+- `/copy` puts text on the system clipboard, where a clipboard manager may keep it.
 - **Your provider sees everything you send.** The whole conversation, attachments included,
   goes to the provider with every message, and the provider keeps it according to its own
   policy. For full privacy, use a local server such as Ollama or LM Studio.

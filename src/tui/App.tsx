@@ -33,7 +33,10 @@ import {
   pastedPathsToMentions,
   readAttachment,
   readClipboard,
+  unescapePath,
+  writeClipboard,
 } from '../files.js';
+import { type ExportTurn, formatMarkdown, tildePath, writeExport } from '../export.js';
 import AddProvider, { type AddedProvider } from './AddProvider.js';
 import { ChatInput } from './ChatInput.js';
 import { completionFor } from './completion.js';
@@ -83,6 +86,8 @@ const HELP = `Commands:
   /effort [level]    set reasoning effort (default to use the model's own)
   /renderer [name]   switch markdown rendering: new or classic
   /clear             forget the conversation and clear the screen
+  /export [path]     save the conversation as a Markdown file (default: current folder)
+  /copy [all]        copy the last reply (or the whole conversation) as Markdown
   /help              show this help
   /quit              exit (or Ctrl+C)
 Model, effort, system prompt and renderer changes last for this session only.
@@ -92,7 +97,7 @@ Editing: Option/Alt+←/→ jump by word, Home/End or Ctrl+A/E jump to the start
 (again for the whole message). New line: Shift+Enter (if your terminal supports it),
 Option/Alt+Enter, or \ then Enter. Tab completes commands. Up/Down move between lines and
 recall earlier prompts. Press Esc while a reply is streaming to stop it.
-Nothing is saved: the conversation disappears when you quit.`;
+Nothing is saved unless you /export it: the conversation disappears when you quit.`;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -202,6 +207,8 @@ export default function App({ config, providerName, modelOverride, version, clea
   const draft = useRef('');
   // Model IDs per provider once /model has listed them, for completing /model <name>.
   const modelIds = useRef(new Map<string, string[]>());
+  // The conversation as shown, with who answered each reply, for /export.
+  const transcript = useRef<ExportTurn[]>([]);
 
   const add = (kind: EntryKind, text: string, extra: Partial<Entry> = {}) =>
     setEntries((current) => [...current, { id: nextId.current++, kind, text, renderer, ...extra }]);
@@ -443,6 +450,14 @@ export default function App({ config, providerName, modelOverride, version, clea
       // Only keep the exchange if something came back, so a failed request
       // doesn't leave a dangling user message in the context.
       setHistory([...conversation, { role: 'assistant', content: reply }]);
+      transcript.current.push({
+        user: text,
+        ...(files ? { files } : {}),
+        reply,
+        stopped: controller.signal.aborted,
+        provider: provider.name,
+        model,
+      });
     } else if (controller.signal.aborted) {
       add('info', 'Stopped.');
     }
@@ -532,6 +547,17 @@ export default function App({ config, providerName, modelOverride, version, clea
 
   // --- Commands ---------------------------------------------------------------
 
+  /** The conversation so far as Markdown, for /export and /copy all. */
+  function conversationMarkdown(date: Date): string {
+    return formatMarkdown(transcript.current, {
+      date,
+      provider: provider?.name ?? '',
+      model,
+      effort,
+      systemPrompt,
+    });
+  }
+
   async function runCommand(line: string) {
     const [name = '', ...rest] = line.slice(1).split(/\s+/);
     const arg = rest.join(' ').trim();
@@ -550,6 +576,7 @@ export default function App({ config, providerName, modelOverride, version, clea
       case 'clear':
         // Like a fresh start: empty conversation, clean screen, welcome box again.
         setHistory([]);
+        transcript.current = [];
         setLastUsage(undefined);
         setSpeed(undefined);
         clearFrame();
@@ -626,6 +653,51 @@ export default function App({ config, providerName, modelOverride, version, clea
           'info',
           `Effort: ${arg}.` + (support ? '' : ` ${provider?.name} doesn’t say whether ${model} supports it, so it may be rejected.`),
         );
+        return;
+      }
+
+      case 'export': {
+        const turns = transcript.current;
+        if (!turns.length) {
+          add('info', 'Nothing to export yet.');
+          return;
+        }
+        const now = new Date();
+        const text = conversationMarkdown(now);
+        try {
+          const file = await writeExport(text, arg ? unescapePath(arg) : undefined, now);
+          const count = turns.length * 2;
+          add('info', `Exported ${count} messages to ${tildePath(file)}`);
+        } catch (error) {
+          add('error', `Could not export: ${errorMessage(error)}`);
+        }
+        return;
+      }
+
+      case 'copy': {
+        const turns = transcript.current;
+        if (arg && arg !== 'all') {
+          add('error', 'Use /copy for the last reply or /copy all for the whole conversation.');
+          return;
+        }
+        const last = turns.at(-1);
+        if (!last) {
+          add('info', 'Nothing to copy yet.');
+          return;
+        }
+        const text = arg === 'all' ? conversationMarkdown(new Date()) : last.reply;
+        const what = arg === 'all' ? 'the conversation' : 'the last reply';
+        try {
+          const method = await writeClipboard(text);
+          add(
+            'info',
+            method === 'system'
+              ? `Copied ${what} to the clipboard.`
+              : `Asked your terminal to copy ${what} (needs OSC 52 support, which macOS Terminal.app lacks).`,
+          );
+        } catch (error) {
+          add('error', `Could not copy: ${errorMessage(error)}`);
+        }
         return;
       }
 
