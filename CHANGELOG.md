@@ -11,6 +11,8 @@ slash-command names. The JavaScript modules are internal.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 
 - `/export [path]` saves the conversation as a Markdown file, in the current folder by
@@ -50,5 +52,6 @@ First public release.
 
 - Requests to Anthropic no longer include the SDK's OS, CPU and runtime headers.
 
-[Unreleased]: https://github.com/k2lhu/achat/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/k2lhu/achat/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/k2lhu/achat/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/k2lhu/achat/releases/tag/v0.1.0
