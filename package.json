@@ -1,6 +1,6 @@
 {
   "name": "@k2lhu/achat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Minimal, private terminal chat for Anthropic, Venice, Featherless and OpenAI-compatible APIs",
   "keywords": [
     "chat",
