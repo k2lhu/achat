@@ -64,6 +64,11 @@ jobs:
       - if: steps.version.outputs.release == 'true'
         run: npm run typecheck
 
+      # Build before publish reads package.json, so the bin file exists when npm
+      # checks it (prepack rebuilds again from clean).
+      - if: steps.version.outputs.release == 'true'
+        run: npm run build
+
       - name: Publish to npm
         if: steps.version.outputs.release == 'true'
         env:
@@ -72,7 +77,6 @@ jobs:
           if npm view "@k2lhu/achat@$VERSION" version > /dev/null 2>&1; then
             echo "@k2lhu/achat@$VERSION is already on npm; skipping publish."
           else
-            # prepack cleans and rebuilds dist/.
             npm publish --access public
           fi
 
