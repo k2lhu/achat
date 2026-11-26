@@ -79,8 +79,16 @@ requests for these are welcome any time.
 
 ## Releasing (maintainer)
 
-1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new version heading.
-2. `npm version <patch|minor>` (updates package.json, commits and tags).
-3. `git push --follow-tags`, wait for CI to pass.
-4. `npm publish` (the `prepack` script cleans and rebuilds `dist/`).
-5. Create a GitHub release from the tag with the changelog text.
+Releases are automated by `.github/workflows/release.yml`.
+
+1. On a `release/vX.Y.Z` branch, move the `[Unreleased]` entries in `CHANGELOG.md` under
+   `## [X.Y.Z] - YYYY-MM-DD` and update the compare links at the bottom.
+2. `npm version X.Y.Z --no-git-tag-version` (updates package.json and package-lock.json).
+3. Commit, push, open a pull request and wait for CI to pass.
+4. Merge it. On `main`, the release workflow sees a version with no tag, publishes it to npm
+   through trusted publishing (no token; provenance is attached), then tags `vX.Y.Z` and
+   creates the GitHub release from that CHANGELOG section.
+
+The workflow does nothing when the version is already tagged, and a re-run skips the steps
+that already happened. If it fails before publishing, fix the cause and re-run it from the
+Actions tab.

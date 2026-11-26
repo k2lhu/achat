@@ -1,0 +1,92 @@
+name: Release
+
+# Merging a version bump into main releases it: publish to npm, then tag
+# v<version> and create the GitHub release from the CHANGELOG. Pushes that
+# don't change to an untagged version do nothing, and a re-run skips the
+# steps that already happened.
+#
+# npm publishing uses trusted publishing (OIDC): npm accepts this workflow
+# file in k2lhu/achat as the publisher, so no npm token is stored anywhere.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two releases at once.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the GitHub release
+      id-token: write # prove to npm that this workflow is the publisher
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Version to release
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already tagged; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          elif ! grep -q "^## \[$version\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$version] - <date>' section."
+            exit 1
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.version.outputs.release == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - name: Update npm
+        if: steps.version.outputs.release == 'true'
+        run: npm install -g npm@11.20.0
+
+      # Dev-only install scripts (esbuild) aren't needed; users' installs have none.
+      - if: steps.version.outputs.release == 'true'
+        run: npm ci --ignore-scripts
+
+      - if: steps.version.outputs.release == 'true'
+        run: npm run typecheck
+
+      - name: Publish to npm
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "@k2lhu/achat@$VERSION" version > /dev/null 2>&1; then
+            echo "@k2lhu/achat@$VERSION is already on npm; skipping publish."
+          else
+            # prepack cleans and rebuilds dist/.
+            npm publish --access public
+          fi
+
+      - name: Tag and create the GitHub release
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The CHANGELOG section for this version, without its heading.
+          awk -v v="$VERSION" '
+            index($0, "## [" v "] - ") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "achat $VERSION" --notes-file notes.md
